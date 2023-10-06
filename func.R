@@ -673,4 +673,34 @@ get_segments <- function(d, normal_sample, sex, build='hg19', multipcf_penalty=7
 }
 
 
+sweep_sample <- function(sample, sex, seg, d, dipLogRs, cores) {
+    message(sample)
+    obj <- get_obj_for_sample(sample, seg, d, sex)
+    sweep_dipLogR <- function(dipLogR, obj, seg, cores) {
+        message(dipLogR)
+        fit <- get_fit(dipLogR, obj, cores=cores)
+        ascn <- get_na_nb(p=fit$pu, t=fit$pl, x=obj$sample_seg)
+        ascn$dipLogR <- dipLogR
+        if(!is.null(fit)) {
+            ascn$len_neg <- as.numeric(fit$len_neg)
+            ascn$len_homdel <-  as.numeric(fit$len_homdel)
+            ascn$len_na <- as.numeric(fit$len_na)
+            ascn$loglik <- as.numeric(fit$loglik)
+        } else {
+            ascn$len_neg <- as.numeric(NA)
+            ascn$len_homdel <- as.numeric(NA)
+            ascn$len_na <- as.numeric(NA)
+            ascn$loglik <- as.numeric(NA)   
+        }
+        ascn
+    }
+    l <- lapply(dipLogRs, sweep_dipLogR, obj, seg, cores)
+    out <- rbindlist(l)
+    out$sample <- sample
+    out
+}
+
+
+
+
 
