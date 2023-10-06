@@ -6,17 +6,31 @@
 import pandas as pd
 import gurobipy as gp
 from gurobipy import GRB
-import gurobipy_pandas as gppd
+#import gurobipy_pandas as gppd
+import logging
+
+## capture output to a log file
+logging.basicConfig(format='%(asctime)s - %(message)s', level=logging.INFO, filename="maximize_shared_CN.log", filemode="a+")
+logging.info('Starting gurobipy script.')
+
 
 # Create an environment with your WLS license
-license_file = '../gurobi.lic'
-with open(license_file) as file:
-    lines = [line.rstrip() for line in file]
+#license_file = '/home/alg2264/gurobi.lic'
+#license_file = '/n/app/gurobi/9.5.2/gurobi.lic'
+#with open(license_file) as file:
+#    lines = [line.rstrip() for line in file]
 
+#params = {
+#        "WLSACCESSID": lines[3].split('=')[1],
+#        "WLSSECRET": lines[4].split('=')[1],
+#        "LICENSEID": int(lines[5].split('=')[1]),
+#        }
+
+
+# create environment with HMS license (module load gurobi first)
 params = {
-        "WLSACCESSID": lines[3].split('=')[1],
-        "WLSSECRET": lines[4].split('=')[1],
-        "LICENSEID": int(lines[5].split('=')[1]),
+        "TokenServer": "license.rc.hms.harvard.edu",
+        "TimeLimit": 600.0
         }
 
 env = gp.Env(params=params)
@@ -27,7 +41,7 @@ model = gp.Model(env=env)
 #model.Params.PoolSolutions = 100
 
 # Read the data from 'mydata.txt' into a pandas DataFrame
-dat = pd.read_csv('processed_data/multifacets_autofit_cval=20_integerCN/dipLogR_sweep_aligned_segments_for_gurobi.tsv', delimiter='\t')
+dat = pd.read_csv('/home/alg2264/data/alex/lpASCN/C161/C161_data_for_gurobi.tsv', delimiter='\t')
 
 # get lengths of variables
 Samples = dat['sample'].unique()
@@ -35,20 +49,23 @@ Profiles = dat['profile'].unique()
 Segments = dat['segment'].unique()
 dat.set_index(['sample','profile','segment'], inplace=True) ## set 3 indices, sample, dipLogR, segment
 
+logging.info('Setting x variables.')
 x = {}
 for t in Samples:
     for p in Profiles:
         x[p, t] = model.addVar(vtype=GRB.BINARY, name='x_'+str(p)+','+str(t))
 
 # Add constraint on x: Each tumor must be associated with exactly one profile
+logging.info('Adding constraints on x.')
 for t in Samples:
     silence = model.addConstr(gp.quicksum(x[(p, t)] for p in Profiles) == 1, name='c1_'+str(t))
 
 # Create auxilary binary variables xbar{0,1} s.t. xbar_{p,t,pp,tt}=x_{p,t} * x_{pp,tt}.
+logging.info('Setting xbar variables and their constraints.')
 xbar = {}
 for t in Samples:
-    print('sample=',t)
     for p in Profiles:
+        logging.info('sample='+t+', profile='+str(p))
         for tt in Samples:
             for pp in Profiles:
                 xbar[p, t, pp, tt] = model.addVar(vtype=GRB.BINARY, name='xbar_'+str(p)+','+str(t)+','+str(pp)+','+str(tt))
@@ -62,13 +79,15 @@ for t in Samples:
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 # create auxiliary binary variable z based on tmp1, tmp2, and create y{s} s.t. y_{s}=1 if s-th segment has the same value across all tumors and 0 otherwise
+logging.info('Creating y variables.')
 y = {}
 for s in Segments:
     y[s] = model.addVar(vtype=GRB.BINARY, name='y_'+str(s))
 
+logging.info('Setting constraints on y variables.')
 for t in Samples:
     for p in Profiles:
-        print('t:',t,',p:',p)
+        logging.info('sample='+t+', profile='+str(p))
         for tt in Samples:
             for pp in Profiles:
                 for s in Segments:
@@ -80,23 +99,27 @@ for t in Samples:
 # do optimization
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-objective_expr = gp.quicksum(y[s] for s in Segments)
 
 # Set objective
+logging.info('Setting objective function.')
+objective_expr = gp.quicksum(y[s] for s in Segments)
 model.setObjective(objective_expr, GRB.MAXIMIZE)
 
 # not sure what these lines do (are they necessary?)
+logging.info('Running model update.')
 model.update()  # process pending model modifications
 
 # attempt to get an optimal solution
+logging.info('Running model optimize.')
 model.optimize()
 
 # Print number of solutions stored
 nSolutions = model.SolCount
-print('Number of solutions found: ' + str(nSolutions))
+logging.info('Number of solutions found: ' + str(nSolutions))
 
 
 # Check if an optimal solution has been found
+logging.info('Printing table with solutions.')
 if model.status == GRB.OPTIMAL:
 
     for w in range(model.SolCount):
@@ -132,13 +155,15 @@ if model.status == GRB.OPTIMAL:
             for s in selected_segments.items():
                 output_file.write(f"{s}\n")
 
-    print("Optimal solution found. Results written to selected_profiles.tsv.")
+    logging.info("Optimal solution found. Results written to selected_profiles.tsv.")
 else:
-    print("No optimal solution found.")
+    logging.info("No optimal solution found.")
 
 
 # Dispose of the model
 model.dispose()
+
+logging.info('Finished!')
 
 # compute IIS(), then export model.export('model')
 
