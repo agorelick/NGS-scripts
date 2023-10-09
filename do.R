@@ -24,6 +24,8 @@ sample_map <- file.path(datadir,'original_data/C161_sample_map.txt') ## table wi
 
 d <- preprocess_data(qdnaseq_data, pileup_data, phased_bcf, sample_map)
 write_tsv(d,file=file.path(datadir,'processed_data/C161_q=10_Q=20_P=0_1000kbs_preprocessed.tsv'))
+seg <- get_segments(d, normal_sample='Normal1', sex='female')
+write_tsv(seg,file=file.path(datadir,'processed_data/C161_q=10_Q=20_P=0_1000kbs_segments.tsv'))
 
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -31,275 +33,126 @@ write_tsv(d,file=file.path(datadir,'processed_data/C161_q=10_Q=20_P=0_1000kbs_pr
 # then extract aligned segments
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-d <- fread(file.path(datadir,'processed_data/C161_q=10_Q=20_P=0_1000kbs_preprocessed.tsv'))
 
 source('~/lab_repos/lpASCN/func.R')
+d <- fread(file.path(datadir,'processed_data/C161_q=10_Q=20_P=0_1000kbs_preprocessed.tsv'))
+
+seg <- fread(file.path(datadir,'processed_data/C161_q=10_Q=20_P=0_1000kbs_segments.tsv'))
+dat <- d2m(data.table::dcast(segment ~ sample, value.var='logR', data=seg))
+write_tsv(dat,file='/Users/alexgorelick/lab_repos/lpASCN/C161_data_for_gurobi.tsv')
+
+## choose our 'standard' sample
+standard <- 'PT8-A'
+valid_segs <- seg[seg_length >= 1e7 & sample==standard] ## subset 
+valid_segs <- valid_segs[order(seg_length,decreasing=T),]
+valid_segs <- valid_segs[!duplicated(Chromosome),]
+seg <- seg[segment %in% valid_segs$segment,]
+
+## first get the threshold error for a segment to be considered to have the 'same' logR in each sample
+tmp.d <- d[,c('sample','bin','logR','Chromosome','Position'),with=F]
+tmp.d[,Position2:=Position+1]
+tmp.d[,id:=paste0(sample,'.',Chromosome)]
+seg.d <- seg[,c('sample','segment','Chromosome','seg_start','seg_end','logR'),with=F]
+seg.d[,id:=paste0(sample,'.',Chromosome)]
+setkey(tmp.d,'id','Position','Position2')
+setkey(seg.d,'id','seg_start','seg_end')
+tmp.d <- foverlaps(tmp.d, seg.d, type='within')
+tmp.d <- tmp.d[!is.na(segment),]
+tmp.d <- tmp.d[Chromosome %in% c(1:22,'X')]
+tmp.d[,diff_from_seg:=i.logR - logR]
+quantile(abs(tmp.d$diff_from_seg),0.20)
+
+## export data for gurobi python script
+y <- seg[sample==standard,c('segment','logR'),with=F]
+X <- seg[sample!=standard,c('segment','sample','logR'),with=F]
+dat <- merge(y, X, by='segment', all=T)
+names(dat) <- c('segment','y','sample','x')
+write_tsv(dat,file='/Users/alexgorelick/lab_repos/lpASCN/C161_data_for_gurobi_long.tsv')
 
 
 
-## below into a function that returns:
-# - BAF matrix
-# - logR matrix
-# - bins annotated with segment number
-# - wide-segments with logR and BAF
-# - should it do the segmentation every time or save previous segmentation? make sure seed works also.
+
+mb <- fread(file.path(datadir,'mb_values.tsv'))
+
+## subset for unique solutions
+same_values <- grep('same_',names(mb),value=T)
+mb$sameID <- apply(mb[,(same_values),with=F], 1, paste, collapse='')
+mb <- mb[!duplicated(sameID),]
+m_values <- grep('m_',names(mb),value=T)
+m_values <- data.table::melt(mb[,c(m_values,'w'),with=F], id.var='w')
+m_values$variable <- as.character(m_values$variable)
+m_values$variable <- gsub('m_','',m_values$variable)
+setnames(m_values,'variable','sample')
+setnames(m_values,'value','m')
+
+b_values <- grep('b_',names(mb),value=T)
+b_values <- data.table::melt(mb[,c(b_values,'w'),with=F], id.var='w')
+b_values$variable <- as.character(b_values$variable)
+b_values$variable <- gsub('b_','',b_values$variable)
+setnames(b_values,'variable','sample')
+setnames(b_values,'value','b')
+
+mb_values <- merge(m_values, b_values, by=c('w','sample'))
+toadd <- data.table(w=(seq(1:nrow(mb))-1), sample=standard, m=1, b=0)
+mb_values <- rbind(mb_values, toadd)
+
+same_values <- grep('same_',names(mb),value=T)
+same_values <- data.table::melt(mb[,c(same_values,'w'),with=F], id.var='w')
+same_values$variable <- as.character(same_values$variable)
+same_values$variable <- as.integer(gsub('same_','',same_values$variable))
+setnames(same_values,'variable','segment')
+setnames(same_values,'value','same')
 
 
-sweep_dipLogRs <- function(d, seg, dipLogRs, normal_sample, sex, cores) {
+seg <- fread(file.path(datadir,'processed_data/C161_q=10_Q=20_P=0_1000kbs_segments.tsv'))
+seg <- merge(seg, mb_values[w==0,], by=c('sample'), all.x=T)
+seg <- seg[order(sample, segment),]
+seg[,logRadj:=logR*m - b]
+seg[,global_seg_start:=seg_start/1e6 + global_start_mb]
+seg[,global_seg_end:=seg_end/1e6 + global_start_mb]
 
-    sweep_sample <- function(sample, sex, seg, d, dipLogRs, cores) {
-        message(sample)
-        obj <- get_obj_for_sample(sample, seg, d, sex)
-        sweep_dipLogR <- function(dipLogR, obj, seg, cores) {
-            message(dipLogR)
-            fit <- get_fit(dipLogR, obj, cores=cores)
-            ascn <- get_na_nb(p=fit$pu, t=fit$pl, x=obj$sample_seg)
-            ascn$dipLogR <- dipLogR
-            if(!is.null(fit)) {
-                ascn$len_neg <- as.numeric(fit$len_neg)
-                ascn$len_homdel <-  as.numeric(fit$len_homdel)
-                ascn$len_na <- as.numeric(fit$len_na)
-                ascn$loglik <- as.numeric(fit$loglik)
-            } else {
-                ascn$len_neg <- as.numeric(NA)
-                ascn$len_homdel <- as.numeric(NA)
-                ascn$len_na <- as.numeric(NA)
-                ascn$loglik <- as.numeric(NA)   
-            }
-            ascn
-        }
-        l <- lapply(dipLogRs, sweep_dipLogR, obj, seg, cores)
-        out <- rbindlist(l)
-        out$sample <- sample
-        out
-    }
-    tumor_samples <- unique(d$sample)
-    tumor_samples <- tumor_samples[tumor_samples!=normal_sample]
+tmp1 <- seg[Chromosome %in% c(1:22,'X'),c('sample','segment','global_seg_start','global_seg_end','logR'),with=F]
+tmp1$type <- 'Original'
+tmp2 <- seg[Chromosome %in% c(1:22,'X'),c('sample','segment','global_seg_start','global_seg_end','logRadj'),with=F]
+setnames(tmp2,'logRadj','logR')
+tmp2$type <- 'Adjusted'
+plotdat <- rbind(tmp1, tmp2)
+plotdat <- merge(plotdat, same_values[w==0,c('segment','same'),with=F], by='segment', all.x=T)
+plotdat$type <- factor(plotdat$type, levels=c('Original','Adjusted'))
+highlight <- plotdat[sample==standard & same==1 & !is.na(same)]
 
-    l <- lapply(tumor_samples, sweep_sample, sex, seg, d, dipLogRs, cores)
-    res <- rbindlist(l)
-    res
-}
+chr <- get_chr_arms()$chr
+chr <- chr[chr %in% c(1:22,'X')]
+tumor_samples <- unique(seg$sample)
+tumor_samples <- tumor_samples[tumor_samples!=standard]
+cols <- c('black',rainbow(length(tumor_samples)))
+names(cols) <- c(standard, tumor_samples)
+p <- ggplot(plotdat) +
+    scale_x_continuous(breaks=chr$global_midpoint, labels=chr$chr, expand=c(0,0)) +
+    scale_y_continuous(expand=c(0,0)) +
+    geom_vline(xintercept=chr$global_end, linewidth=0.25, color='black') +
+    annotate("rect", xmin=highlight$global_seg_start, xmax=highlight$global_seg_end, ymin=min(plotdat$logR)-0.25, ymax=max(plotdat$logR)+0.25, fill='steelblue', alpha=0.03) +
+    geom_segment(data=plotdat[sample!=standard], aes(x=global_seg_start, xend=global_seg_end, y=logR, yend=logR, color=sample), linewidth=0.5, alpha=0.25) +
+    geom_segment(data=plotdat[sample==standard], aes(x=global_seg_start, xend=global_seg_end, y=logR, yend=logR, color=sample), linewidth=1) +
+    scale_color_manual(values=cols, name='Sample') +
+    facet_wrap(facets=~type, ncol=1) +
+    theme_fit(base_size=12)
+
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# scrap below
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+samples <- unique(seg$sample)
+cores <- 6
+this.sex <- 'female'
+this.normal <- 'Normal1'
 
 dipLogRs <- seq(-2,2,by=0.01)
 cores <- 6
 this.sex <- 'female'
 this.normal <- 'Normal1'
-
-seg <- get_segments(d, normal_sample=this.normal, sex=this.sex)
-res <- sweep_dipLogRs(d, seg, dipLogRs, normal_sample=this.normal, sex, cores) 
-
-
-## get a matrix with total copy number for each segment in each sample/dipLogR
-res$nai <- round(res$na)
-res$nbi <- round(res$nb)
-res[!is.na(nbi),tcn:=nai+nbi]
-res[is.na(nbi),tcn:=nai]
-x <- data.table::dcast(dipLogR + sample ~ segment, value.var='tcn', data=res)
-
-plot_fit(fit, obj)
-
-
-
-
-
-# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-# scrap below
-# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-## why 3 clusters in BAF at chr4 segment 14?
-library(Ckmeans.1d.dp)
-qc <- obj$sample_dat
-qc <- qc[Chromosome==4,]
-qc <- qc[segment==14,]
-clus <- Ckmeans.1d.dp(qc$i.BAF, k=c(1,2,3))
-qc$k <- factor(clus$cluster)
-p <- ggplot(qc, aes(x=bin, y=i.BAF)) +
-    geom_point(aes(color=k))
-
-
-
-
-get_possible_fits_for_sample <- function(this.sample, seg, cores=4) {
-    require(parallel)
-    message(this.sample)
-    purity <- round(seq(0.05,0.95,by=0.01),2)
-    ploidy <- round(seq(1.0, 6, by=0.01),2)
-    pupl <- as.data.table(expand.grid(pu=purity, pl=ploidy))
-    n_fits <- nrow(pupl)
-
-    try_fits <- function(i, pupl, x) {
-        pu <- pupl$pu[i]
-        pl <- pupl$pl[i]
-        MSE <- test_pupl(pu, pl, x)
-        list(pl=pl, pu=pu, MSE=MSE)
-    }
-
-    x <- seg[sample==this.sample]
-    l <- mclapply(1:n_fits, try_fits, pupl, x, mc.cores=cores)
-    res <- rbindlist(l)
-    res$sample <- this.sample
-    res
-}
-fit_list <- lapply(samples, get_possible_fits_for_sample, seg)
-fits <- rbindlist(fit_list)
-fits$dipLogR <- log2(2/(2*(1-fits$pu) + fits$pu*fits$pl))
-fits[sample=='PT8-A']
-
-## remove bad fits based on negative copy number segments
-get_profile_for_fit <- function(i, fits, seg) {
-    this.sample <- fits$sample[i]
-    this.pu <- fits$pu[i]
-    this.pl <- fits$pl[i]
-    this.dipLogR <- fits$dipLogR[i]
-    sample.seg <- seg[sample==this.sample]
-    fit <- get_na_nb(this.pu, this.pl, sample.seg)
-    total_length <-  sum(sample.seg$seg_length)
-    len_negative <- sum(sample.seg$seg_length[round(fit$na) <= -1 | round(fit$nb) <= -1],na.rm=T)
-    len_homdel <- sum(sample.seg$seg_length[round(fit$na) == 0 & round(fit$nb) == 0],na.rm=T)
-    len_na <- sum(sample.seg$seg_length[is.na(fit$na) | is.na(fit$nb)])
-    list(sample=this.sample, purity=this.pu, ploidy=this.pl, dipLogR=this.dipLogR, len_negative=len_negative, len_homdel=len_homdel, len_na=len_na, total_length=total_length)    
-}
-n_fits <- nrow(fits)
-#n_fits <- 1e3
-profile_list <- mclapply(1:n_fits, get_profile_for_fit, fits, seg, mc.cores=4) ## ~30 sec
-profiles <- rbindlist(profile_list)
-
-
-
-
-
-
-get_fit_for_dipLogR <- function(dipLogR, sample_fits) {
-    sample_fits$diff_from_dipLogR <- abs(sample_fits$dipLogR - dipLogR)
-    sample_fits <- sample_fits[order(diff_from_dipLogR, decreasing=F),]
-    sample_fits <- sample_fits[diff_from_dipLogR==min(diff_from_dipLogR),]
-    sample_fits <- sample_fits[MSE==min(MSE),]
-    sample_fits
-}
-myfit <- get_fit_for_dipLogR(dipLogR, sample_fits)
-
-
-
-
-
-
-
-
-
-
-
-
-## for each ploidy value, get the most-likely purity estimates based on local minima of MSE
-get_local_minima <- function(x) {
-    minima <- which(diff(sign(diff(x$MSE)))==2)+1
-    x[minima]
-}
-minima_fits <- fits[,get_local_minima(.SD),by=c('sample','pl')]
-
-
-
-
-
-
-
-
-
-## for each fit, check the number of segments that h
-#samples %in% profiles$sample ## we still have all samples
-
-## for each sample, get the lower quantile of the MSE, use this to reduce the number of minima fits
-#sample_thresholds <- function(fits) {
-#    q=quantile(fits$MSE,0.2)
-#    list(q=q)
-#}
-#qs <- fits[,sample_thresholds(.SD),by=sample]
-#minima_fits <- merge(minima_fits, qs, by='sample', all.x=T)
-#minima_fits <- minima_fits[MSE < q,]
-
-minima_fits$minimum <- T
-pd <- merge(fits, minima_fits[,c('sample','pl','pu','minimum'),with=F], by=c('sample','pl','pu'), all.x=T)
-pd[is.na(minimum),minimum:=F]
-p <- ggplot(pd, aes(x=pl, y=pu)) +
-    geom_tile(aes(fill=MSE)) +
-    geom_point(data=pd[minimum==T,], pch=16, size=0.1, color='black') +
-    facet_wrap(facets=~sample) +
-    theme_ang(base_size=12) +
-    scale_fill_gradient2(low='red',mid='white',high='blue',midpoint=median(minima_fits$MSE))
-
-
-# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-# 
-
-
-
-
-
-
-
-
-
-x <- seg[sample=='PT8-A']
-#x[,logR:=logR+0.60]
-#x[,logR:=logR+0.54]
-#x[,logR:=logR-0.36]
-ascn <- get_na_nb(p=0.44, t=3.3, x)
-x$na <- ascn$na
-x$nb <- ascn$nb
-#x$na <- round(ascn$na)
-#x$nb <- round(ascn$nb)
-x[Chromosome==3,]
-x[,n:=round(na)+round(nb)]
-sum(x$n*x$seg_length) / sum(x$seg_length)
-#profiles[sample=='PT8-A' & ploidy==3.3 & purity==0.73]
-
-
-
-
-
-get_profile_for_fit <- function(i, minima_fits, seg) {
-    this.sample <- minima_fits$sample[i]
-    this.pu <- minima_fits$pu[i]
-    this.pl <- minima_fits$pl[i]
-    sample.seg <- seg[sample==this.sample]
-    fit <- get_na_nb(this.pu, this.pl, sample.seg)
-    fit$purity <- this.pu
-    fit$ploidy <- this.pl
-    fit$nai <- round(fit$na)
-    fit$nbi <- round(fit$nb)
-    out <- as.list(c(fit$nai, fit$nbi))
-    names(out) <- c(paste0(fit$segment,'.a'), paste0(fit$segment,'.b'))
-    out <- append(list(sample=this.sample, purity=this.pu, ploidy=this.pl), out)
-    out
-}
-profile_list <- mclapply(1:nrow(minima_fits), get_profile_for_fit, minima_fits, seg, mc.cores=4) ## ~30 sec
-profiles <- rbindlist(profile_list)
-
-## try UMAP to see how samples cluster based on integer copy number (among the positive-minima-fits)
-set.seed(42)
-library(umap)
-sample_profiles <- profiles
-umap.data = as.matrix(sample_profiles[,(4:ncol(sample_profiles)),with=F])
-bad_cols <- which(is.na(colSums(umap.data)))
-umap.data <- umap.data[,-bad_cols]
-my.umap = umap(umap.data, n_components = 2)
-layout <- my.umap[["layout"]] 
-layout <- as.data.table(layout) 
-final <- cbind(layout, sample_profiles[,c(1:3),with=F])
-best <- final[(V1 > -6 & V1 < 1) & (V2 > -1 & V2 < 6)] ## this gives many samples with ploidy ~ 1
-p <- ggplot(final, aes(x=V2, y=V1)) +
-    geom_point(aes(fill=sample),pch=21,color='black',stroke=0.25) 
-
-
-    facet_wrap(facets=~sample)
-
-## can I try to identify segments to target with the linear program??
-dm <- data.table::melt(profiles, id.vars=c('sample','purity','ploidy'))
-dm$variable <- as.character(dm$variable)
-dm[,segment:=as.integer(strtrim(variable,(nchar(variable)-2)))]
-dm[,allele:=substr(variable,(nchar(variable)),(nchar(variable)))]
-dm <- data.table::dcast(sample + purity + ploidy + segment ~ allele, value.var='value', data=dm)
-
+l <- sweep_sample(tumor_sample,  sex, seg, d, dipLogRs, cores)
 
 
 
