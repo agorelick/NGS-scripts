@@ -115,12 +115,12 @@ tmp1 <- seg[Chromosome %in% c(1:22,'X'),c('sample','segment','global_seg_start',
 tmp1$type <- 'Original'
 tmp2 <- seg[Chromosome %in% c(1:22,'X'),c('sample','segment','global_seg_start','global_seg_end','logRadj'),with=F]
 setnames(tmp2,'logRadj','logR')
-tmp2$type <- 'Adjusted'
+tmp2$type <- 'Aligned'
 plotdat <- rbind(tmp1, tmp2)
 plotdat <- merge(plotdat, same_values[w==0,c('segment','same'),with=F], by='segment', all.x=T)
-plotdat$type <- factor(plotdat$type, levels=c('Original','Adjusted'))
+plotdat$type <- factor(plotdat$type, levels=c('Original','Aligned'))
 highlight <- plotdat[sample==standard & same==1 & !is.na(same)]
-
+seg$same <- seg$segment %in% highlight$segment
 chr <- get_chr_arms()$chr
 chr <- chr[chr %in% c(1:22,'X')]
 tumor_samples <- unique(seg$sample)
@@ -136,7 +136,79 @@ p <- ggplot(plotdat) +
     geom_segment(data=plotdat[sample==standard], aes(x=global_seg_start, xend=global_seg_end, y=logR, yend=logR, color=sample), linewidth=1) +
     scale_color_manual(values=cols, name='Sample') +
     facet_wrap(facets=~type, ncol=1) +
-    theme_fit(base_size=12)
+    theme_fit(base_size=10) +
+    labs(x='Genomic position', y='logR')
+ggsave('aligned_logR.pdf',width=11, height=7)
+
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# check the 'same' segments in each sample's adjusted logR, which ones are NOT the same?
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+library(ape)
+library(ggtree)
+library(cowplot)
+
+qc <- seg[Chromosome %in% c(1:22,'X')]
+qc <- data.table::dcast(segment ~ sample, value.var='logRadj', data=qc)
+aligned_seg <- same_values[same==1,(segment)]
+qc <- d2m(qc)
+diff_from_standard <- qc - qc[,standard]
+
+## hierarchical clustering of samples based on logRadj difference from standard
+dm <- dist(t(diff_from_standard))
+tree <- phangorn::upgma(dm)
+p1 <- ggtree(tree)
+tmp <- as.data.table(p1$data)
+tmp <- tmp[isTip==T,]
+tmp <- tmp[order(y),]
+
+## get segment order
+segment_order <- c(as.integer(unique(pd[Aligned=='No',(segment)])),
+                   as.integer(unique(pd[Aligned=='Yes',(segment)])))
+
+pd <- cbind(segment=as.integer(rownames(diff_from_standard)), as.data.table(diff_from_standard))
+pd <- data.table::melt(pd, id.var='segment')
+names(pd) <- c('segment','sample','diff')
+pd$segment <- factor(pd$segment, levels=sort(unique(pd$segment))) #segment_order)
+pd[segment %in% aligned_seg, Aligned:='Aligned']
+pd[!segment %in% aligned_seg, Aligned:='Not aligned']
+pd$Aligned <- factor(pd$Aligned, levels=c('Not aligned','Aligned'))
+pd$sample <- factor(pd$sample, levels=tmp$label)
+
+p2 <- ggplot(pd, aes(x=segment, y=sample)) +
+    scale_y_discrete(position='right') +
+    geom_tile(aes(fill=diff), color=NA) +
+    scale_fill_gradient2(low='blue', mid='white', high='red', name='Diff from "standard" logR') +
+    facet_grid (.~ Aligned, scales = "free_x", space = "free_x") +
+    theme_fit(base_size=12) +
+    theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5), legend.position='bottom') +
+    labs(x='Segment', y='Sample')
+
+p <- plot_grid(p1, p2, align='h', ncol=2, rel_widths=c(1,5), axis=c('tb'))
+ggsave('logR_diff_from_standard_heatmap.pdf',width=11,height=7)
+
+
+source('func.R')
+
+seg <- fread(file.path(datadir,'processed_data/C161_q=10_Q=20_P=0_1000kbs_segments.tsv'))
+d <- fread(file.path(datadir,'processed_data/C161_q=10_Q=20_P=0_1000kbs_preprocessed.tsv'))
+standard <- 'PT8-A'
+sex <- 'female'
+
+## first try fitting based on dipLogR?
+## goal is to get 2q, 11p, 14q, 19p on integer copies
+obj <- get_obj_for_sample(standard, seg, d, sex=sex)
+fit <- get_fit(obj, dipLogR=-0.46, cores=4)
+plot_fit(fit, obj, highlight_seg=aligned_seg)
+
+## not happy with the negative CNs and aligned segs not all close to integers, trying manually
+fit <- get_fit(obj, purity=0.75, ploidy=4.4, cores=4)
+plot_fit(fit, obj, int_copies=F, highlight_seg=aligned_seg)
+
+
+
+
 
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

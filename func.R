@@ -304,7 +304,7 @@ get_loglik <- function(pu, pl, obj) {
 
 
 
-get_fit <- function(dipLogR, obj, max_homdel=1e8, max_neg=0, max_ploidy=8, cores=1) {
+get_fit <- function(obj, dipLogR=NA, purity=NA, ploidy=NA, max_homdel=1e8, max_neg=0, max_ploidy=8, cores=1) {
     require(parallel)
 
     sample_dat <- obj$sample_dat
@@ -313,25 +313,38 @@ get_fit <- function(dipLogR, obj, max_homdel=1e8, max_neg=0, max_ploidy=8, cores
     loglik_BAF <- obj$loglik_BAF
     #max_homdel=1e8; max_neg=0; max_ploidy=8; dipLogR <- -0.432
 
-    purity <- seq(0.05,1,by=0.001)
-    ploidy <- (2*(purity + 2^(-dipLogR) - 1)) / purity
-    myfits <- data.table(pu=purity, pl=round(ploidy,3))
+    if(!is.na(dipLogR) & (is.na(purity) | is.na(ploidy))) {        
+        message('dipLogR provided')
+        autofit <- T
+        purity <- seq(0.05,1,by=0.001)
+        ploidy <- (2*(purity + 2^(-dipLogR) - 1)) / purity
+        myfits <- data.table(pu=purity, pl=round(ploidy,3))
+        myfits$dipLogR <- dipLogR
+    } else if(!is.na(purity) & !is.na(ploidy)) {
+        message('Purity/ploidy provided')
+        autofit <- F
+        myfits <- data.table(pu=purity, pl=ploidy)
+        myfits$dipLogR = round(log2(( 2*(1-purity) + purity*2 ) / ( 2*(1-purity) + purity*ploidy )), 4)
+    } else {
+        stop('Please provide either (a) dipLogR, or (b) purity+ploidy values')
+    }
 
     ## for all fits, first filter out impossible fits based on negative copies and too much homozygous deletion
     qc_fit <- function(i, myfits, sample_seg) {
         this.pu <- myfits$pu[i]
         this.pl <- myfits$pl[i]
+        this.dipLogR <- myfits$dipLogR[i]
         fit <- get_na_nb(this.pu, this.pl, sample_seg)
         len_neg <- sum(sample_seg$seg_length[round(fit$na) <= -1 | round(fit$nb) <= -1],na.rm=T)
         len_homdel <- sum(sample_seg$seg_length[round(fit$na) == 0 & round(fit$nb) == 0],na.rm=T)
         len_na <- sum(sample_seg$seg_length[is.na(fit$na) | is.na(fit$nb)])
-        list(pu=this.pu, pl=this.pl, len_neg=len_neg, len_homdel=len_homdel, len_na=len_na)
+        list(pu=this.pu, pl=this.pl, dipLogR=this.dipLogR, len_neg=len_neg, len_homdel=len_homdel, len_na=len_na)
     }
 
     n_fits <- nrow(myfits)
     profile_list <- mclapply(1:n_fits, qc_fit, myfits, sample_seg, mc.cores=cores) 
     myfits <- rbindlist(profile_list)
-    myfits <- myfits[len_neg <= max_neg & len_homdel <= max_homdel & pl <= max_ploidy,]
+    if(autofit==T) myfits <- myfits[len_neg <= max_neg & len_homdel <= max_homdel & pl <= max_ploidy,]
 
     get_possible_fits_for_sample <- function(myfits, obj, cores) {
         #browser()
@@ -351,7 +364,6 @@ get_fit <- function(dipLogR, obj, max_homdel=1e8, max_neg=0, max_ploidy=8, cores
     if(nrow(myfits) > 0) {
         myfits <- get_possible_fits_for_sample(myfits, obj, cores)
         myfits <- myfits[order(loglik,decreasing=T),]
-        myfits$dipLogR <- dipLogR
         myfits[1,]
     } else {
         NULL
@@ -361,7 +373,7 @@ get_fit <- function(dipLogR, obj, max_homdel=1e8, max_neg=0, max_ploidy=8, cores
 
 
 
-plot_fit <- function(fit, obj) {
+plot_fit <- function(fit, obj, int_copies=F, highlight_seg=c()) {
     require(cowplot)
     require(ggplot2)
     sample_dat <- obj$sample_dat
@@ -369,6 +381,10 @@ plot_fit <- function(fit, obj) {
     sample_seg[,global_seg_start:=(seg_start/1e6) + global_start_mb]
     sample_seg[,global_seg_end:=(seg_end/1e6) + global_start_mb]
 
+    #browser()
+    if(length(highlight_seg) > 0) {
+        highlight <- sample_seg[segment %in% highlight_seg]
+    }
     sname <- paste0(obj$samplename,' (purity=',fit$pu,', ploidy=',fit$pl,', loglik=',round(fit$loglik,3),', dipLogR=',fit$dipLogR,')')
     sex <- obj$sex
 
@@ -377,6 +393,7 @@ plot_fit <- function(fit, obj) {
     } else {
         valid_chrs <- c(1:22,'X','Y')
     }
+    chr <- get_chr_arms()$chr
 
     plot_sample_seg <- sample_seg[Chromosome %in% valid_chrs]
     plot_sample_dat <- sample_dat[Chromosome %in% valid_chrs]
@@ -412,19 +429,32 @@ plot_fit <- function(fit, obj) {
     ascn[is.na(nb) & !is.na(na), mcn:=NA]
     ascn[tcn >= 10, tcn:=log10(tcn)+9]
     ascn[mcn >= 10, tcn:=log10(mcn)+9]
+    ascn[,tcn_ad_from_int:=abs(tcn-round(tcn))] 
+    ascn[,mcn_ad_from_int:=abs(mcn-round(mcn))] 
     ascn[tcn < -1, tcn:=-1]
     ascn[mcn < -1, mcn:=-1]
 
+    if(int_copies==T) {
+        #ascn[,tcn_ad_from_int:=abs(tcn-round(tcn))] 
+        #ascn[,mcn_ad_from_int:=abs(mcn-round(mcn))] 
+        ascn[,tcn:=round(tcn)]
+        ascn[,mcn:=round(mcn)]
+    }
+
+    #browser()
     p3 <- ggplot(ascn) + 
-        scale_y_continuous(breaks=c(seq(0,10,by=2),log10(50)+9,log10(100)+9), labels=c(seq(0,10,by=2),50,100)) +
+        scale_y_continuous(breaks=c(seq(0,10,by=2),log10(100)+9), labels=c(seq(0,10,by=2),100)) +
         scale_x_continuous(breaks=plot_chr$global_midpoint, labels=plot_chr$chr, expand=c(0,0)) +
+        annotate("rect", xmin=highlight$global_seg_start, xmax=highlight$global_seg_end, ymin=-0.5, ymax=log10(100)+9, fill='steelblue', alpha=0.1) +
         geom_hline(yintercept=seq(0,10,by=1), color='#bfbfbf', size=0.25) +
         geom_vline(xintercept=c(0,plot_chr$global_end),size=0.25) +
-        geom_segment(aes(x=global_seg_start,xend=global_seg_end,y=tcn,yend=tcn),color='black',linewidth=1,lineend='round') +
-        geom_segment(aes(x=global_seg_start,xend=global_seg_end,y=mcn,yend=mcn),color='red',linewidth=1,lineend='round') +
+        geom_segment(aes(x=global_seg_start,xend=global_seg_end,y=tcn,yend=tcn,alpha=tcn_ad_from_int),linewidth=1,color='black',lineend='round') +
+        geom_segment(aes(x=global_seg_start,xend=global_seg_end,y=mcn,yend=mcn,alpha=mcn_ad_from_int),linewidth=1,color='red',lineend='round') +
+        scale_alpha(range=c(0.5,0), limits=c(0,0.75), breaks=seq(0,0.5,by=0.25), name='AD from integer CN') +
         theme_fit(base_size=12) +
-        labs(x='Genomic posititon', y='Copy number')
-    p <- plot_grid(p1, p2, p3, align='v', ncol=1, rel_heights=c(1.05,1,1.2))
+        theme(legend.position='bottom') +
+        labs(x='Genomic posititon', y='Copy number') 
+    p <- plot_grid(p1, p2, p3, align='v', ncol=1, rel_heights=c(1.05,1,1.2), axis='lr')
     p
 }
 
@@ -457,7 +487,7 @@ get_obj_for_sample <- function(this.sample, seg, d, sex) {
 theme_fit <- function (base_size = 11, base_line_size = base_size/22, base_rect_size = base_size/22) {
     require(ggplot2)
     theme_bw(base_size = base_size, base_line_size = base_line_size,
-        base_rect_size = base_rect_size) %+replace% theme(line = element_line(colour = "black", size = base_line_size, linetype = 1, lineend = "round"),
+        base_rect_size = base_rect_size) %+replace% theme(line = element_line(colour = "black", linewidth = base_line_size, linetype = 1, lineend = "round"),
         text = element_text(colour = "black", size = base_size, lineheight = 0.9, hjust = 0.5, vjust = 0.5, angle = 0, margin = margin(), debug = F), 
         axis.text = element_text(colour = "black", size = rel(0.8)), 
         axis.ticks = element_line(colour = "black", size = rel(1)), 
