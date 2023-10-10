@@ -6,4 +6,5 @@ Azenta's lpWGS analysis pipeline includes genotype imputation: https://web.azent
 
 ```
 bcftools view -i "%FILTER='PASS'" -g het -O z  -c 0 [samplename].vcf.gz > [samplename]_hetsnps.vcf.gz
+bcftools index [samplename]_hetsnps.vcf.gz
 ```
