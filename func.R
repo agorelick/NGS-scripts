@@ -148,6 +148,7 @@ preprocess_data <- function(qdnaseq_data, pileup_data, phased_bcf, sample_map, m
     d[is.na(count_raw),count_raw:=0]
     d[,dp:=count1+count2]
     d[Ref=='N', BAF:=count1 / dp]
+    d[BAF < 0 | BAF > 1, BAF:=NA]
     d[,bin:=paste0(chr,':',position)]
     d$bin <- as.integer(factor(d$bin, levels=unique(d$bin)))
     get_logR <- function(d) {
@@ -326,7 +327,12 @@ get_fit <- function(obj, dipLogR=NA, purity=NA, ploidy=NA, max_homdel=1e8, max_n
         myfits <- data.table(pu=purity, pl=ploidy)
         myfits$dipLogR = round(log2(( 2*(1-purity) + purity*2 ) / ( 2*(1-purity) + purity*ploidy )), 4)
     } else {
-        stop('Please provide either (a) dipLogR, or (b) purity+ploidy values')
+        message('grid-searching purity/ploidy combinations')
+        autofit <- T
+        purity <- seq(0.05,1,by=0.025)
+        ploidy <- seq(1,6,by=0.025)
+        myfits <- as.data.table(expand.grid(pu=purity, pl=ploidy))
+        myfits$dipLogR = round(log2(( 2*(1-myfits$pu) + myfits$pu*2 ) / ( 2*(1-myfits$pu) + myfits$pu*myfits$pl )), 2)
     }
 
     ## for all fits, first filter out impossible fits based on negative copies and too much homozygous deletion
@@ -380,13 +386,11 @@ plot_fit <- function(fit, obj, int_copies=F, highlight_seg=c()) {
     sample_seg <- obj$sample_seg
     sample_seg[,global_seg_start:=(seg_start/1e6) + global_start_mb]
     sample_seg[,global_seg_end:=(seg_end/1e6) + global_start_mb]
-
-    #browser()
-    if(length(highlight_seg) > 0) {
-        highlight <- sample_seg[segment %in% highlight_seg]
-    }
+    sample_seg[, highlight:=F]
+    sample_seg[segment %in% highlight_seg, highlight:=T]
     sname <- paste0(obj$samplename,' (purity=',fit$pu,', ploidy=',fit$pl,', loglik=',round(fit$loglik,3),', dipLogR=',fit$dipLogR,')')
     sex <- obj$sex
+    highlight <- sample_seg[highlight==T,]
 
     if(sex=='female') {
         valid_chrs <- c(1:22,'X')
@@ -435,17 +439,15 @@ plot_fit <- function(fit, obj, int_copies=F, highlight_seg=c()) {
     ascn[mcn < -1, mcn:=-1]
 
     if(int_copies==T) {
-        #ascn[,tcn_ad_from_int:=abs(tcn-round(tcn))] 
-        #ascn[,mcn_ad_from_int:=abs(mcn-round(mcn))] 
         ascn[,tcn:=round(tcn)]
         ascn[,mcn:=round(mcn)]
     }
 
-    #browser()
     p3 <- ggplot(ascn) + 
         scale_y_continuous(breaks=c(seq(0,10,by=2),log10(100)+9), labels=c(seq(0,10,by=2),100)) +
-        scale_x_continuous(breaks=plot_chr$global_midpoint, labels=plot_chr$chr, expand=c(0,0)) +
-        annotate("rect", xmin=highlight$global_seg_start, xmax=highlight$global_seg_end, ymin=-0.5, ymax=log10(100)+9, fill='steelblue', alpha=0.1) +
+        scale_x_continuous(breaks=plot_chr$global_midpoint, labels=plot_chr$chr, expand=c(0,0)) 
+    if(nrow(highlight) > 0) p3 <- p3 + annotate("rect", xmin=highlight$global_seg_start, xmax=highlight$global_seg_end, ymin=-0.5, ymax=log10(100)+9, fill='steelblue', alpha=0.1)
+    p3 <- p3 + 
         geom_hline(yintercept=seq(0,10,by=1), color='#bfbfbf', size=0.25) +
         geom_vline(xintercept=c(0,plot_chr$global_end),size=0.25) +
         geom_segment(aes(x=global_seg_start,xend=global_seg_end,y=tcn,yend=tcn,alpha=tcn_ad_from_int),linewidth=1,color='black',lineend='round') +
@@ -627,10 +629,10 @@ get_chr_arms <- function(chr_lengths_file=here('misc/chr_lengths_b37.txt'), cyto
 }
 
 
-get_segments <- function(d, normal_sample, sex, build='hg19', multipcf_penalty=70, seed=42, tmpdir='.', cleanup=T, binsize=1e6) {
-    #build <- 'hg19'; multipcf_penalty <- 70; cleanup <- T; seed=42; normal_sample <- 'Normal1'; sex <- 'female'; tmpdir <- '.'
+get_segments <- function(d, normal_sample, sex, build='hg19', penalty=70, seed=42, tmpdir='.', cleanup=T, binsize=1e6) {
+    #build <- 'hg19'; penalty <- 70; cleanup <- T; seed=42; normal_sample <- 'Normal1'; sex <- 'female'; tmpdir <- '.'
 
-    l <- run_multipcf(d, normal_sample=normal_sample, sex=sex, build=build, penalty=multipcf_penalty, cleanup=cleanup, seed=seed, tmpdir=tmpdir)
+    l <- run_multipcf(d, normal_sample=normal_sample, sex=sex, build=build, penalty=penalty, cleanup=cleanup, seed=seed, tmpdir=tmpdir)
 
     ## add chrM back in
     chrM <- d[Chromosome=='MT',]
@@ -703,12 +705,45 @@ get_segments <- function(d, normal_sample, sex, build='hg19', multipcf_penalty=7
 }
 
 
+refine_segments <- function(d, seg, k.max, min.bins.for.clustering=10, normal_sample, sex, build='hg19', penalty=70, seed=42, tmpdir='.', cleanup=T, binsize=1e6) {
+    require(Ckmeans.1d.dp)
+
+    ## combine the preprocessed data with a first-round of segments
+    d[,Position2:=Position+1]
+    seg <- seg[!duplicated(segment),c('segment','Chromosome','seg_start','seg_end','n_bins'),with=F]
+    setkey(d,'Chromosome','Position','Position2')
+    setkey(seg,'Chromosome','seg_start','seg_end')
+    d <- foverlaps(d, seg, type='any')
+
+    cluster_baf <- function(dd, k.max) {
+        dd <- dd[order(BAF,decreasing=F),]
+        clus <- Ckmeans.1d.dp(dd$BAF, k=c(1,k.max))
+        dd$k <- clus$cluster
+        k.max.used <- max(clus$cluster)
+        if(k.max.used > 2)  dd[!k %in% c(1,k.max.used), BAF:=NA]
+        dd
+    }
+
+    valid_clusters <- seg[n_bins >= min.bins.for.clustering, (segment)]
+    d1 <- d[is.na(segment) | !segment %in% valid_clusters]
+    d1$k <- as.integer(NA)
+    d2 <- d[segment %in% valid_clusters, cluster_baf(.SD,k.max), by=c('sample','segment')]
+    dnew <- rbind(d1, d2)
+    dnew$Chromosome <- factor(dnew$Chromosome, levels=c(1:22,'X','Y','MT'))
+    dnew <- dnew[order(Chromosome, Position, sample),]
+
+    ## now regenerate the segments
+    segnew <- get_segments(dnew, normal_sample=normal_sample, sex=sex, build=build, penalty=penalty, seed=seed, tmpdir='.', cleanup=cleanup, binsize=binsize)
+    list(d=dnew, seg=segnew)
+}
+
+
 sweep_sample <- function(sample, sex, seg, d, dipLogRs, cores) {
     message(sample)
     obj <- get_obj_for_sample(sample, seg, d, sex)
     sweep_dipLogR <- function(dipLogR, obj, seg, cores) {
         message(dipLogR)
-        fit <- get_fit(dipLogR, obj, cores=cores)
+        fit <- get_fit(dipLogR=dipLogR, obj, cores=cores)
         ascn <- get_na_nb(p=fit$pu, t=fit$pl, x=obj$sample_seg)
         ascn$dipLogR <- dipLogR
         if(!is.null(fit)) {
