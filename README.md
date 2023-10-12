@@ -19,3 +19,9 @@ for chr in {1..22}; do files=$files" "[samplename]_hetsnps_phased_chr${chr}.bcf;
 bcftools concat -o [samplename]_hetsnps_phased.bcf $files
 bcftools index [samplename]_hetsnps_phased.bcf
 ```
+
+## Run MEDICC2 for copy-number event based phylogenies
+
+```
+medicc2 --bootstrap-nr 200 --bootstrap-method chr-wise --events --plot both MDA11_q=10_Q=20_P=0_1000kbs_segments_for_medicc2.tsv medicc2_bs=200_chr_events
+```
