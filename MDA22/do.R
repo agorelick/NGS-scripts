@@ -16,24 +16,24 @@ library(ASCAT)
 source('~/lab_repos/lpASCN/func.R')
 
 ## define input arguments/parameters
-datadir <- '~/Dropbox (Partners HealthCare)/MGH CLINICAL/ALEX/germline_data/lpASCN/MDA11'
-phased_bcf <- file.path(datadir,'original_data/MDA11_Normal1_hetsnps_phased.bcf')
-pileup_data <- file.path(datadir,'original_data/MDA11.pileup')
-qdnaseq_data <- file.path(datadir,paste0('original_data/MDA11_1000kbp_withXYMT.rds'))
-sample_map <- file.path(datadir,'original_data/MDA11_sample_map.txt') ## table with columns: pileup_order, sample_name, proper_sample_name, qdnaseq_name
+datadir <- '~/Dropbox (Partners HealthCare)/MGH CLINICAL/ALEX/germline_data/lpASCN/MDA22'
+phased_bcf <- file.path(datadir,'original_data/MDA22_Normal2_hetsnps_phased.bcf')
+pileup_data <- file.path(datadir,'original_data/MDA22.pileup')
+qdnaseq_data <- file.path(datadir,paste0('original_data/MDA22_1000kbp_withXYMT.rds'))
+sample_map <- file.path(datadir,'original_data/MDA22_sample_map.txt') ## table with columns: pileup_order, sample_name, proper_sample_name, qdnaseq_name
 
 #pileup <- fread(pileup_data)
-#qdnaseq <- readRDS(file.path(datadir,paste0('original_data/MDA11_1000kbp_withXYMT.rds')))
+#qdnaseq <- readRDS(file.path(datadir,paste0('original_data/MDA22_1000kbp_withXYMT.rds')))
 
 d <- preprocess_data(qdnaseq_data, pileup_data, phased_bcf, sample_map)
-write_tsv(d,file=file.path(datadir,'processed_data/MDA11_q=10_Q=20_P=0_1000kbs_preprocessed.tsv'))
-seg <- get_segments(d, normal_sample='Normal1', sex='male', penalty=20)
-write_tsv(seg,file=file.path(datadir,'processed_data/MDA11_q=10_Q=20_P=0_1000kbs_segments.tsv'))
+write_tsv(d,file=file.path(datadir,'processed_data/MDA22_q=10_Q=20_P=0_1000kbs_preprocessed.tsv'))
+seg <- get_segments(d, normal_sample='Normal2', sex='male', penalty=20)
+write_tsv(seg,file=file.path(datadir,'processed_data/MDA22_q=10_Q=20_P=0_1000kbs_segments.tsv'))
 
 ## try clustering BAFs to remove subclones from BAF-fit
-refined <- refine_segments(d, seg, k.max=10, normal_sample='Normal1', sex='male', penalty=20)
-write_tsv(refined$d,file=file.path(datadir,'processed_data/MDA11_q=10_Q=20_P=0_1000kbs_preprocessed_refined.tsv'))
-write_tsv(refined$seg,file=file.path(datadir,'processed_data/MDA11_q=10_Q=20_P=0_1000kbs_segments_refined.tsv'))
+refined <- refine_segments(d, seg, k.max=10, normal_sample='Normal2', sex='male', penalty=20)
+write_tsv(refined$d,file=file.path(datadir,'processed_data/MDA22_q=10_Q=20_P=0_1000kbs_preprocessed_refined.tsv'))
+write_tsv(refined$seg,file=file.path(datadir,'processed_data/MDA22_q=10_Q=20_P=0_1000kbs_segments_refined.tsv'))
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # checking how clustering works to remove subclones from BAF
@@ -61,8 +61,8 @@ write_tsv(refined$seg,file=file.path(datadir,'processed_data/MDA11_q=10_Q=20_P=0
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 source('~/lab_repos/lpASCN/func.R')
-d <- fread(file.path(datadir,'processed_data/MDA11_q=10_Q=20_P=0_1000kbs_preprocessed.tsv'))
-seg <- fread(file.path(datadir,'processed_data/MDA11_q=10_Q=20_P=0_1000kbs_segments.tsv'))
+d <- fread(file.path(datadir,'processed_data/MDA22_q=10_Q=20_P=0_1000kbs_preprocessed.tsv'))
+seg <- fread(file.path(datadir,'processed_data/MDA22_q=10_Q=20_P=0_1000kbs_segments.tsv'))
 tumor_samples <- unique(seg$sample)
 autofit_dir <- file.path(datadir,'autofits')
 
@@ -84,17 +84,16 @@ trash <- lapply(tumor_samples, autofit, d, seg, sex='male', cores=4)
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 source('~/lab_repos/lpASCN/func.R')
-d <- fread(file.path(datadir,'processed_data/MDA11_q=10_Q=20_P=0_1000kbs_preprocessed.tsv'))
-seg <- fread(file.path(datadir,'processed_data/MDA11_q=10_Q=20_P=0_1000kbs_segments.tsv'))
-#dat <- d2m(data.table::dcast(segment ~ sample, value.var='logR', data=seg))
-#write_tsv(dat,file.path(datadir,'processed_data/MDA11_q=10_Q=20_P=0_1000kbs_segments.tsv'))
+d <- fread(file.path(datadir,'processed_data/MDA22_q=10_Q=20_P=0_1000kbs_preprocessed.tsv'))
+seg <- fread(file.path(datadir,'processed_data/MDA22_q=10_Q=20_P=0_1000kbs_segments.tsv'))
 
 ## choose our 'standard' sample
-standard <- 'Liv1b'
+standard <- 'PT3'
 valid_segs <- seg[seg_length >= 1e7 & sample==standard] ## subset 
 #valid_segs <- valid_segs[order(seg_length,decreasing=T),]
 #valid_segs <- valid_segs[!duplicated(Chromosome),]
 seg <- seg[segment %in% valid_segs$segment,]
+seg <- seg[sample!='LN1']
 
 ## first get the threshold error for a segment to be considered to have the 'same' logR in each sample
 tmp.d <- d[,c('sample','bin','logR','Chromosome','Position'),with=F]
@@ -108,15 +107,14 @@ tmp.d <- foverlaps(tmp.d, seg.d, type='within')
 tmp.d <- tmp.d[!is.na(segment),]
 tmp.d <- tmp.d[Chromosome %in% c(1:22,'X','Y')] ## NB: I'm including Y because it's a male patient, but there are no large enough segments on Y here
 tmp.d[,diff_from_seg:=i.logR - logR]
-quantile(abs(tmp.d$diff_from_seg),0.20)  # 0.017798
+quantile(abs(tmp.d$diff_from_seg),0.20)
 
 ## export data for gurobi python script
 y <- seg[sample==standard,c('segment','logR'),with=F]
 X <- seg[sample!=standard,c('segment','sample','logR'),with=F]
 dat <- merge(y, X, by='segment', all=T)
 names(dat) <- c('segment','y','sample','x')
-write_tsv(dat,file=file.path(datadir,'processed_data/MDA11_q=10_Q=20_P=0_1000kbs_data_for_gurobi_long.tsv'))
-
+write_tsv(dat,file=file.path(datadir,'processed_data/MDA22_q=10_Q=20_P=0_1000kbs_data_for_gurobi_long.tsv')) ## leaving out low purity LN1
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # continue after LP optimization
@@ -145,8 +143,6 @@ setnames(b_values,'value','b')
 mb_values <- merge(m_values, b_values, by=c('w','sample'))
 toadd <- data.table(w=(seq(1:nrow(mb))-1), sample=standard, m=1, b=0)
 mb_values <- rbind(mb_values, toadd)
-mb_values[sample=='P1',sample:='PT1']
-mb_values[sample=='P2',sample:='PT2']
 
 same_values <- grep('same_',names(mb),value=T)
 same_values <- data.table::melt(mb[,c(same_values,'w'),with=F], id.var='w')
@@ -156,7 +152,7 @@ setnames(same_values,'variable','segment')
 setnames(same_values,'value','same')
 
 
-seg <- fread(file.path(datadir,'processed_data/MDA11_q=10_Q=20_P=0_1000kbs_segments.tsv'))
+seg <- fread(file.path(datadir,'processed_data/MDA22_q=10_Q=20_P=0_1000kbs_segments.tsv'))
 seg <- merge(seg, mb_values[w==0,], by=c('sample'), all.x=T)
 seg <- seg[order(sample, segment),]
 seg[,logRadj:=logR*m - b]
@@ -179,18 +175,19 @@ tumor_samples <- unique(seg$sample)
 tumor_samples <- tumor_samples[tumor_samples!=standard]
 cols <- c('black',rainbow(length(tumor_samples)))
 names(cols) <- c(standard, tumor_samples)
+
 p <- ggplot(plotdat) +
     scale_x_continuous(breaks=chr$global_midpoint, labels=chr$chr, expand=c(0,0)) +
     scale_y_continuous(expand=c(0,0)) +
     geom_vline(xintercept=chr$global_end, linewidth=0.25, color='black') +
-    annotate("rect", xmin=highlight$global_seg_start, xmax=highlight$global_seg_end, ymin=min(plotdat$logR)-0.25, ymax=max(plotdat$logR)+0.25, fill='steelblue', alpha=0.08) +
+    annotate("rect", xmin=highlight$global_seg_start, xmax=highlight$global_seg_end, ymin=min(plotdat$logR,na.rm=T)-0.25, ymax=max(plotdat$logR,na.rm=T)+0.25, fill='steelblue', alpha=0.08) +
     geom_segment(data=plotdat[sample!=standard], aes(x=global_seg_start, xend=global_seg_end, y=logR, yend=logR, color=sample), linewidth=0.5, alpha=0.25) +
     geom_segment(data=plotdat[sample==standard], aes(x=global_seg_start, xend=global_seg_end, y=logR, yend=logR, color=sample), linewidth=1) +
     scale_color_manual(values=cols, name='Sample') +
     facet_wrap(facets=~type, ncol=1) +
     theme_fit(base_size=10) +
     labs(x='Genomic position', y='logR')
-ggsave(file.path(datadir,'figures/MDA11_q=10_Q=20_P=0_1000kbs_aligned_logR.pdf'),width=11, height=7)
+ggsave(file.path(datadir,'figures/MDA22_q=10_Q=20_P=0_1000kbs_aligned_logR.pdf'),width=11, height=7)
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # check the 'same' segments in each sample's adjusted logR, which ones are NOT the same?
@@ -200,7 +197,7 @@ library(ape)
 library(ggtree)
 library(cowplot)
 
-qc <- seg[Chromosome %in% c(1:22,'X','Y')]
+qc <- seg[!is.na(w) & Chromosome %in% c(1:22,'X','Y')]
 qc <- data.table::dcast(segment ~ sample, value.var='logRadj', data=qc)
 aligned_seg <- same_values[same==1,(segment)]
 qc <- d2m(qc)
@@ -234,8 +231,7 @@ p2 <- ggplot(pd, aes(x=segment, y=sample)) +
     labs(x='Segment', y='Sample')
 
 p <- plot_grid(p1, p2, align='h', ncol=2, rel_widths=c(1,5), axis=c('tb'))
-ggsave(file.path(datadir,'figures/MDA11_q=10_Q=20_P=0_1000kbs_logR_diff_from_standard_heatmap.pdf'),width=11, height=7)
-
+ggsave(file.path(datadir,'figures/MDA22_q=10_Q=20_P=0_1000kbs_logR_diff_from_standard_heatmap.pdf'),width=11, height=7)
 
 
 
@@ -246,9 +242,9 @@ ggsave(file.path(datadir,'figures/MDA11_q=10_Q=20_P=0_1000kbs_logR_diff_from_sta
 
 source('~/lab_repos/lpASCN/func.R')
 
-seg <- fread(file.path(datadir,'processed_data/MDA11_q=10_Q=20_P=0_1000kbs_segments.tsv'))
-d <- fread(file.path(datadir,'processed_data/MDA11_q=10_Q=20_P=0_1000kbs_preprocessed.tsv'))
-standard <- 'Liv1b'
+seg <- fread(file.path(datadir,'processed_data/MDA22_q=10_Q=20_P=0_1000kbs_segments.tsv'))
+d <- fread(file.path(datadir,'processed_data/MDA22_q=10_Q=20_P=0_1000kbs_preprocessed.tsv'))
+standard <- 'PT3'
 sex <- 'male'
 samples <- sort(unique(seg$sample))
 qc <- seg[segment %in% aligned_seg & sample==standard,]
@@ -256,13 +252,12 @@ qc <- seg[segment %in% aligned_seg & sample==standard,]
 fitdir <- file.path(datadir,'fits')
 if(!dir.exists(fitdir)) dir.create(fitdir)
 
-## fit Liv1b (standard)
+## fit PT3 (standard)
 ## goal is to get aligned segments on integer copies
-obj1 <- get_obj_for_sample('Liv1b', seg, d, sex=sex)
-fit1 <- get_fit(obj1, dipLogR=-0.46, cores=4)
+obj1 <- get_obj_for_sample('PT3', seg, d, sex=sex)
+fit1 <- get_fit(obj1, purity=0.55, ploidy=3.15, cores=4)
 plot_fit(fit1, obj1, highlight_seg=aligned_seg)
-ggsave(file.path(datadir,'fits/MDA11_Liv1b_standard.pdf'),width=8, height=10.5)
-
+ggsave(file.path(datadir,'fits/MDA22_PT3_standard.pdf'),width=8, height=10.5)
 
 ## for each sample, our goal is for these segments to be roughly on integers
 standard_ascn <- get_na_nb(p=fit1$pu, t=fit1$pl, x=seg[sample==standard & segment %in% aligned_seg])
@@ -302,52 +297,68 @@ result <- rbindlist(l)
 result[!duplicated(sample),]
 
 
-## fit Liv1b (standard)
-## goal is to get aligned segments on integer copies
-obj1 <- get_obj_for_sample('Liv1b', seg, d, sex=sex)
-fit1 <- get_fit(obj1, purity=0.58, ploidy=3.33, cores=4)
+obj1 <- get_obj_for_sample('PT3', seg, d, sex=sex)
+fit1 <- get_fit(obj1, purity=0.63, ploidy=3.01, cores=4)
 plot_fit(fit1, obj1, highlight_seg=aligned_seg)
-ggsave(file.path(datadir,'fits/MDA11_Liv1b.pdf'),width=8, height=10.5)
+ggsave(file.path(datadir,'fits/MDA22_PT3.pdf'),width=8, height=10.5)
 
-obj2 <- get_obj_for_sample('Liv1a', seg, d, sex=sex)
-fit2 <- get_fit(obj2, purity=0.40, ploidy=3.41, cores=4)
-plot_fit(fit2, obj2, int_copies=F, highlight_seg=aligned_seg)
-ggsave(file.path(datadir,'fits/MDA11_Liv1a.pdf'),width=8, height=10.5)
+obj2 <- get_obj_for_sample('PT2', seg, d, sex=sex)
+fit2 <- get_fit(obj2, purity=0.54, ploidy=3.16, cores=4)
+plot_fit(fit2, obj2, highlight_seg=aligned_seg)
+ggsave(file.path(datadir,'fits/MDA22_PT2.pdf'),width=8, height=10.5)
 
-obj3 <- get_obj_for_sample('Lun1', seg, d, sex=sex)
-fit3 <- get_fit(obj3, purity=0.39, ploidy=3.38, cores=4)
-plot_fit(fit3, obj3, int_copies=F, highlight_seg=aligned_seg)
-ggsave(file.path(datadir,'fits/MDA11_Lun1.pdf'),width=8, height=10.5)
+obj3 <- get_obj_for_sample('PT1', seg, d, sex=sex)
+fit3 <- get_fit(obj3, purity=0.55, ploidy=3.09, cores=4)
+plot_fit(fit3, obj3, highlight_seg=aligned_seg)
+ggsave(file.path(datadir,'fits/MDA22_PT1.pdf'),width=8, height=10.5)
 
-obj4 <- get_obj_for_sample('Lun2', seg, d, sex=sex)
-fit4 <- get_fit(obj4, purity=0.55, ploidy=3.27, cores=4)
-plot_fit(fit4, obj4, int_copies=F, highlight_seg=aligned_seg)
-ggsave(file.path(datadir,'fits/MDA11_Lun2.pdf'),width=8, height=10.5)
+obj4 <- get_obj_for_sample('Lun1b', seg, d, sex=sex)
+fit4 <- get_fit(obj4, purity=0.40, ploidy=3.01, cores=4)
+plot_fit(fit4, obj4, highlight_seg=aligned_seg)
+ggsave(file.path(datadir,'fits/MDA22_Lun1b.pdf'),width=8, height=10.5)
 
-obj5 <- get_obj_for_sample('Lun3', seg, d, sex=sex)
-fit5 <- get_fit(obj5, purity=0.66, ploidy=3.04, cores=4)
-plot_fit(fit5, obj5, int_copies=F, highlight_seg=aligned_seg)
-ggsave(file.path(datadir,'fits/MDA11_Lun3.pdf'),width=8, height=10.5)
+obj5 <- get_obj_for_sample('Lun1a', seg, d, sex=sex)
+fit5 <- get_fit(obj5, purity=0.36, ploidy=2.90, cores=4)
+plot_fit(fit5, obj5, highlight_seg=aligned_seg)
+ggsave(file.path(datadir,'fits/MDA22_Lun1a.pdf'),width=8, height=10.5)
 
-obj6 <- get_obj_for_sample('PT1', seg, d, sex=sex)
-fit6 <- get_fit(obj6, purity=0.46, ploidy=3.61, cores=4)
-plot_fit(fit6, obj6, int_copies=F, highlight_seg=aligned_seg)
-ggsave(file.path(datadir,'fits/MDA11_PT1.pdf'),width=8, height=10.5)
+obj6 <- get_obj_for_sample('LN4', seg, d, sex=sex)
+fit6 <- get_fit(obj6, purity=0.45, ploidy=3.13, cores=4)
+plot_fit(fit6, obj6, highlight_seg=aligned_seg)
+ggsave(file.path(datadir,'fits/MDA22_LN4.pdf'),width=8, height=10.5)
 
-obj7 <- get_obj_for_sample('PT2', seg, d, sex=sex)
-fit7 <- get_fit(obj7, purity=0.83, ploidy=3.72, cores=4)
-plot_fit(fit7, obj7, int_copies=F, highlight_seg=aligned_seg)
-ggsave(file.path(datadir,'fits/MDA11_PT2.pdf'),width=8, height=10.5)
+## low purity
+obj7 <- get_obj_for_sample('LN3', seg, d, sex=sex)
+fit7 <- get_fit(obj7, purity=0.13, ploidy=3.10, cores=4)
+plot_fit(fit7, obj7, highlight_seg=aligned_seg)
+ggsave(file.path(datadir,'fits/MDA22_LN3.pdf'),width=8, height=10.5)
 
-fits_file <- file.path(datadir,'processed_data/MDA11_q=10_Q=20_P=0_1000kbs_fits.tsv')
-fits <- rbind(fit1, fit2, fit3, fit4, fit5, fit6, fit7)
+obj8 <- get_obj_for_sample('LN2', seg, d, sex=sex)
+fit8 <- get_fit(obj8, purity=0.62, ploidy=3.04, cores=4)
+plot_fit(fit8, obj8, highlight_seg=aligned_seg)
+ggsave(file.path(datadir,'fits/MDA22_LN2.pdf'),width=8, height=10.5)
+
+## low purity
+obj9 <- get_obj_for_sample('LN1', seg, d, sex=sex)
+fit9 <- get_fit(obj9, purity=0.16, ploidy=2.15, cores=4)
+plot_fit(fit9, obj9, highlight_seg=aligned_seg)
+ggsave(file.path(datadir,'fits/MDA22_LN1.pdf'),width=8, height=10.5)
+
+obj10 <- get_obj_for_sample('Liv1', seg, d, sex=sex)
+fit10 <- get_fit(obj10, purity=0.41, ploidy=2.93, cores=4)
+plot_fit(fit10, obj10, highlight_seg=aligned_seg)
+ggsave(file.path(datadir,'fits/MDA22_Liv1.pdf'),width=8, height=10.5)
+
+
+fits_file <- file.path(datadir,'processed_data/MDA22_q=10_Q=20_P=0_1000kbs_fits.tsv')
+fits <- rbind(fit1, fit2, fit3, fit4, fit5, fit6, fit7, fit8, fit9, fit10)
 write_tsv(fits, fits_file)
          
 
 
-# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-# prepare data for MEDICC2
-# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# generate data for MEDICC2
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 fits <- fread(fits_file)
 get_ascn_for_sample <- function(i, fits, seg) {
@@ -361,7 +372,8 @@ get_ascn_for_sample <- function(i, fits, seg) {
 }
 l <- lapply(1:nrow(fits), get_ascn_for_sample, fits, seg)
 results <- rbindlist(l)
-write_tsv(results,file.path(datadir,'processed_data/MDA11_q=10_Q=20_P=0_1000kbs_segments_fit.tsv'))
+write_tsv(results,file.path(datadir,'processed_data/MDA22_q=10_Q=20_P=0_1000kbs_segments_fit.tsv'))
+
 
 medicc <- results[Chromosome %in% 1:22,]
 medicc[is.na(nb)]
@@ -373,9 +385,8 @@ medicc[,start:=start/1e6]
 medicc[,end:=end/1e6]
 medicc$start <- round(medicc$start)
 medicc$end <- round(medicc$end)
-write_tsv(medicc,file.path(datadir,'processed_data/MDA11_q=10_Q=20_P=0_1000kbs_segments_for_medicc2.tsv'))
-
-
+medicc <- medicc[!sample_id %in% c('LN1','LN3'),]
+write_tsv(medicc,file.path(datadir,'processed_data/MDA22_q=10_Q=20_P=0_1000kbs_segments_for_medicc2.tsv'))
 
 
 results[!is.na(na) & is.na(nb), tcn:=na]
