@@ -20,9 +20,9 @@ bcftools concat -o [samplename]_hetsnps_phased.bcf $files
 bcftools index [samplename]_hetsnps_phased.bcf
 ```
 
-## Filter phased VCF for heterozygous SNPs with high confidence (GP>=0.9)
+## Filter phased VCF for heterozygous SNPs with high confidence (GP>=0.9) and remove FORMAT/DS,GP fields from GLIMPSE2
 ```
-bcftools view -O b -g het C157N1_Normal1_ligated.bcf -i 'FORMAT/GP>=0.90' > C157N1_Normal1_ligated_hetsnps.bcf
+bcftools view -O b -g het C157N1_Normal1_ligated.bcf -i 'FORMAT/GP>=0.90' | bcftools annotate -x FORMAT/DS,FORMAT/GP -O b > C157N1_Normal1_ligated_cleaned.bcf
 ```
 
 ## Run MEDICC2 for copy-number event based phylogenies
