@@ -25,6 +25,11 @@ bcftools index [samplename]_hetsnps_phased.bcf
 bcftools view -O b -g het C157N1_Normal1_ligated.bcf -i 'FORMAT/GP>=0.90' | bcftools annotate -x FORMAT/DS,FORMAT/GP -O b > C157N1_Normal1_ligated_cleaned.bcf
 ```
 
+## Filter VCF for mutations with FILTER=={'PASS' or '.'} (after running GATK FilterMutectCalls) 
+```
+bcftools view -i "%FILTER='PASS' | %FILTER='.'" MDA11_filtered.vcf.gz | bcftools view -I - -O z -o MDA11_filtered_passed.vcf.gz
+```
+
 ## Run MEDICC2 for copy-number event based phylogenies
 
 ```
