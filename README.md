@@ -8,6 +8,27 @@
 git clone git@github.com:agorelick/lpASCN.git
 ```
 
+## (Optional) Convert BAM files back to FASTQ files if necessary.
+
+This pipeline should be run from FASTQ files in order to ensure that all preprocessing is standardized. In case you only have access to BAM files (and you aren't sure exactly how they were generated), you can convert them back to FASTQs with this script. Note: this assumes paired-end reads.
+
+First, copy convert_bams_to_fastqs.sh from this repo to a location on o2 where you can save large data files. Then create a symbolic link to a directory with the bam files you will use: 
+
+```
+# create sym-link to the bam directory
+ln -s [PATH TO DIRECTORY WITH BAM FILES] original_bams
+```
+
+Then, modify the convert_bams_to_fastqs.sh script to include the names of the bam files in the "samples" array. You may also need to change the bam file name in the `BAM="original_bams/${sample}_aligned.bam"` to match how your pre-existing bam files are named.
+
+Finally, run the convert_bams_to_fastqs.sh script to regenerate fastq.gz files the read pairs for each sample. Job will be run very quickly, ~ 5 min per sample.
+
+```
+sbatch convert_bams_to_fastqs.sh
+```
+
+
+
 ## Create analysis-ready bam files
 
 This step uses the run_processing.sh slurm script to generate analysis-ready bam files based on GATK's Best Practices for Data pre-processing for variant discovery (see: https://gatk.broadinstitute.org/hc/en-us/articles/360035535912). 
