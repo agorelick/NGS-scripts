@@ -1,8 +1,34 @@
-# lpASCN
-scripts for generating allele-specific copy number data for multi-region bulk tumor samples with low-pass WGS
+# Instructions for low-coverage copy number pipeline on o2
 
-## Download pre-built executable files for GLIMPSE2 onto o2
 
+## Clone this repo onto o2
+
+```
+# Clone this repo on o2
+git clone git@github.com:agorelick/lpASCN.git
+```
+
+## Create analysis-ready bam files
+
+This step uses the run_processing.sh slurm script to generate analysis-ready bam files based on GATK's Best Practices for Data pre-processing for variant discovery (see: https://gatk.broadinstitute.org/hc/en-us/articles/360035535912). 
+
+Copy the run_processing.sh script to a location on *o2* containing the subdirectory "00_fastq/" which contains paired-end FASTQ files with suffixes: "_R1_001.fastq.gz" and "_R2_001.fastq.gz" (this is the default provided by Azenta). 
+
+Next, modify the script to use your sample names and vial names (which refer to the name from the fastq file). Also edit the number of jobs in the header `#SBATCH --array=0-8` for your number of samples. These are indexed at 0, so this example is for 9 samples to be run parallel.
+
+Note: the adapter sequences in the cutadapt section are for Illumina universal adapter sequences, which is what Azenta uses for lpWGS. You can check this by running FASTQC on your FASTQ files, and change the adapter sequences if necessary.
+
+Also note: This script is setup for alignment to human reference genome b37 (Broad's version of GRCh37/hg19). This can be changed to b38/GRCh38/hg38, but as of 12/16/2023 Alex's haplotype-aware copy number calling pipeline requires b37.
+
+Total run-time per sample is around 6 hours.
+
+Run the slurm job on o2 via the command `sbatch run_preprocessing.sh`.
+
+
+
+## Obtained haplotype-phased heterozygous germline SNPs from a normal sample
+
+### Download pre-built executable files for GLIMPSE2 onto o2
 ```
 mkdir ~/.GLIMPSE2; cd ~/.GLIMPSE2
 wget https://github.com/odelaneau/GLIMPSE/releases/download/v2.0.0/GLIMPSE2_chunk_static
@@ -15,7 +41,7 @@ wget https://github.com/odelaneau/GLIMPSE/releases/download/v2.0.0/GLIMPSE2_spli
 
 
 
-## Obtaining het-SNPs from lpWGS data analyzed by Azenta
+### Obtaining het-SNPs from lpWGS data analyzed by Azenta
 Azenta's lpWGS analysis pipeline includes genotype imputation: https://web.azenta.com/genotyping-arrays-low-pass-genome-sequencing. These are provided in files named `analysis/[samplename].vcf.gz` (with genome build b37). You can subset these for only high-confidence heterozygous SNPs via the following bcftools command. Note that we need `-c 0` to be added to make sure that the output has field "AC" required by SHAPEIT4 for phasing.
 
 ```
