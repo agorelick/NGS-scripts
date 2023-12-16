@@ -1,6 +1,20 @@
 # lpASCN
 scripts for generating allele-specific copy number data for multi-region bulk tumor samples with low-pass WGS
 
+## Download pre-built executable files for GLIMPSE2 onto o2
+
+```
+mkdir ~/.GLIMPSE2; cd ~/.GLIMPSE2
+wget https://github.com/odelaneau/GLIMPSE/releases/download/v2.0.0/GLIMPSE2_chunk_static
+wget https://github.com/odelaneau/GLIMPSE/releases/download/v2.0.0/GLIMPSE2_concordance_static
+wget https://github.com/odelaneau/GLIMPSE/releases/download/v2.0.0/GLIMPSE2_ligate_static
+wget https://github.com/odelaneau/GLIMPSE/releases/download/v2.0.0/GLIMPSE2_phase_static
+wget https://github.com/odelaneau/GLIMPSE/releases/download/v2.0.0/GLIMPSE2_split_reference_static
+```
+
+
+
+
 ## Obtaining het-SNPs from lpWGS data analyzed by Azenta
 Azenta's lpWGS analysis pipeline includes genotype imputation: https://web.azenta.com/genotyping-arrays-low-pass-genome-sequencing. These are provided in files named `analysis/[samplename].vcf.gz` (with genome build b37). You can subset these for only high-confidence heterozygous SNPs via the following bcftools command. Note that we need `-c 0` to be added to make sure that the output has field "AC" required by SHAPEIT4 for phasing.
 
