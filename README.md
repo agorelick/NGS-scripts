@@ -28,7 +28,6 @@ sbatch convert_bams_to_fastqs.sh
 ```
 
 
-
 ## Create analysis-ready bam files
 
 This step uses the run_processing.sh slurm script to generate analysis-ready bam files based on GATK's Best Practices for Data pre-processing for variant discovery (see: https://gatk.broadinstitute.org/hc/en-us/articles/360035535912). 
@@ -47,9 +46,11 @@ Run the slurm job on o2 via the command `sbatch run_preprocessing.sh`.
 
 
 
-## Obtained haplotype-phased heterozygous germline SNPs from a normal sample
+## Obtained haplotype-phased heterozygous germline SNPs
 
-### Download pre-built executable files for GLIMPSE2 onto o2
+GLIMPSE2 (https://odelaneau.github.io/GLIMPSE/) is a software designed for genotyping common SNPs using low-coverage WGS. This works by using a reference panel of genotypes from haplotype-phased whole genomes along with genomic linkage maps to impute common SNPs missing from our low-coverage bam and estimate their phasing orientation to each other. The accuracy of this process depends on the number of whole genomes in the reference panel, the frequency of the imputed SNP in the population, and coverage in the given bam file. According to the GLIMPSE2 paper, using 1x WGS and data from the 1000 genomes consortium as a reference panel, we can expect greater than 80% accuracy when imputing/phasing SNPs in 1% of the population. This seems to be quite sufficient for copy number uses. However, it is **not sufficient evidence for genotyping *specific* germline variants in a patient's genome!** Also note: statistical phasing is less accurate for SNPs that are further apart. Roughly, heterozygous germline SNPs less than 20kb apart can be phased with 90% accuracy. 
+
+Download pre-built executable files for GLIMPSE2 onto o2
 ```
 mkdir ~/.GLIMPSE2; cd ~/.GLIMPSE2
 wget https://github.com/odelaneau/GLIMPSE/releases/download/v2.0.0/GLIMPSE2_chunk_static
@@ -58,6 +59,8 @@ wget https://github.com/odelaneau/GLIMPSE/releases/download/v2.0.0/GLIMPSE2_liga
 wget https://github.com/odelaneau/GLIMPSE/releases/download/v2.0.0/GLIMPSE2_phase_static
 wget https://github.com/odelaneau/GLIMPSE/releases/download/v2.0.0/GLIMPSE2_split_reference_static
 ```
+
+Next, copy `run_glimpse.sh` to the directory containing the newly-created `preprocessing/` subdirectory, which contains a bam file from a normal tissue sample. Edit the script to replace the name of the normal sample (in the example, it is C157N1). Then run the script with `sbatch run_glimpse.sh`.
 
 
 
