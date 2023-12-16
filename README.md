@@ -21,7 +21,7 @@ ln -s [PATH TO DIRECTORY WITH BAM FILES] original_bams
 
 Then, modify the convert_bams_to_fastqs.sh script to include the names of the bam files in the "samples" array. You may also need to change the bam file name in the `BAM="original_bams/${sample}_aligned.bam"` to match how your pre-existing bam files are named.
 
-Finally, run the convert_bams_to_fastqs.sh script to regenerate fastq.gz files the read pairs for each sample. Job will be run very quickly, ~ 5 min per sample.
+Finally, run the convert_bams_to_fastqs.sh script to regenerate paired-end fastq.gz files for each sample. These jobs will be run very quickly, ~ 5 min per sample.
 
 ```
 sbatch convert_bams_to_fastqs.sh
