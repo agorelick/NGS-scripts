@@ -4,12 +4,15 @@
 #SBATCH -p short
 #SBATCH --mem 16000
 #SBATCH -o run_preprocessing_%A_%a.out
-#SBATCH --array=0-8  ## adjust for number of paired fastq-files, this example is for 9 samples.
+#SBATCH --array=0-8   # run a different job for each sample (here for 9 samples, starting at 0)
 #SBATCH --mail-user=alexander_gorelick@hms.harvard.edu  # Email to which notifications will be sent
 #SBATCH --mail-type=ALL
 
-## this is an example slurm script to create analysis-ready bam files using GATK 'best practices' on the HMS o2 cluster. Adjust the adapter sequences based on output from FASTQC (the adapters here are for universal Illumina adapters, which is what Azenta uses for lpWGS).
-## Alex Gorelick, 11/20/2023
+## Notes:
+## this script generated analysis-ready bam files based on GATK's Best Practices for Data pre-processing for variant discovery (see: https://gatk.broadinstitute.org/hc/en-us/articles/360035535912).
+## run on o2: "sbatch run_preprocessing.sh"
+## run this script from a directory containing subdirectory "00_fastq/", which contains paired-end FASTQ files with suffix: "_R1_001.fastq.gz" and "_R2_001.fastq.gz". The adapter sequences in the cutadapt command are for Illumina universal adapter sequences, which is what Azenta uses for lpWGS. Double check this by running FASTQC on your FASTQ files.
+## this script is setup for aligning for b37 (Broad's version of GRCh37/hg19). This can be changed to b38/GRCh38/hg38, but as of 12/16/2023 Alex's haplotype-aware copy number calling pipeline requires b37.
 
 mkdir -p cutadapt
 mkdir -p preprocessing
@@ -18,7 +21,7 @@ mkdir -p preprocessing
 reference='/home/alg2264/data/alex/reference_data/assemblies/Homo_sapiens_assembly19/Homo_sapiens_assembly19.fasta'
 polymorphic_sites='/home/alg2264/data/alex/reference_data/dbSNP/dbSNP_GRCh37/00-common_all.vcf.gz'
 
-## declare sample array
+## declare vials array (names of tubes submitted to azenta) and samples array (names of samples)
 declare -a vials=("1A" "1B" "1C" "1D" "1E" "1F" "1G" "1H" "2A")
 declare -a samples=("RLL2" "RML1b" "RLL1" "Normal1" "RUL1c" "Th1" "Kn5" "Kn8" "Kn3")
 
@@ -64,3 +67,5 @@ if [ -f preprocessing/${sample}_recal_data.table ] && [ ! -f preprocessing/${sam
     echo $cmd
     eval $cmd
 fi
+
+
