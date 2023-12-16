@@ -13,6 +13,7 @@
 ## run on o2: "sbatch run_preprocessing.sh"
 ## run this script from a directory containing subdirectory "00_fastq/", which contains paired-end FASTQ files with suffix: "_R1_001.fastq.gz" and "_R2_001.fastq.gz". The adapter sequences in the cutadapt command are for Illumina universal adapter sequences, which is what Azenta uses for lpWGS. Double check this by running FASTQC on your FASTQ files.
 ## this script is setup for alignment to human reference genome b37 (Broad's version of GRCh37/hg19). This can be changed to b38/GRCh38/hg38, but as of 12/16/2023 Alex's haplotype-aware copy number calling pipeline requires b37.
+## total run-time per sample is around 6 hours.
 
 mkdir -p cutadapt
 mkdir -p preprocessing
@@ -20,6 +21,9 @@ mkdir -p preprocessing
 # use BWAIndex/version0.6.0 (needs to be greater than 0.5.* for bwa>=0.7)
 reference='/home/alg2264/data/alex/reference_data/assemblies/Homo_sapiens_assembly19/Homo_sapiens_assembly19.fasta'
 polymorphic_sites='/home/alg2264/data/alex/reference_data/dbSNP/dbSNP_GRCh37/00-common_all.vcf.gz'
+
+# replace this with your directory for large temporary files.
+tmp_dir='~/scratch'
 
 ## declare vials array (names of tubes submitted to azenta) and samples array (names of samples)
 declare -a vials=("1A" "1B" "1C" "1D" "1E" "1F" "1G" "1H" "2A")
@@ -51,19 +55,19 @@ if [ ! -f preprocessing/${sample}_raw.sam ]; then
 fi
 
 if [ -f preprocessing/${sample}_raw.sam ] && [ ! -f preprocessing/${sample}_marked_dup.bam ]; then
-    cmd="gatk MarkDuplicatesSpark --input preprocessing/${sample}_raw.sam --output preprocessing/${sample}_marked_dup.bam --tmp-dir ~/scratch --reference $reference -M preprocessing/${sample}_marked_dup_metrics.txt --conf 'spark.executor.cores=20'"
+    cmd="gatk MarkDuplicatesSpark --input preprocessing/${sample}_raw.sam --output preprocessing/${sample}_marked_dup.bam --tmp-dir $tmp_dir --reference $reference -M preprocessing/${sample}_marked_dup_metrics.txt --conf 'spark.executor.cores=20'"
     echo $cmd
     eval $cmd
 fi
 
 if [ -f preprocessing/${sample}_marked_dup.bam ] && [ ! -f preprocessing/${sample}_recal_data.table ]; then
-    cmd="gatk BaseRecalibrator -I preprocessing/${sample}_marked_dup.bam -R $reference --known-sites $polymorphic_sites -O preprocessing/${sample}_recal_data.table --tmp-dir ~/scratch"
+    cmd="gatk BaseRecalibrator -I preprocessing/${sample}_marked_dup.bam -R $reference --known-sites $polymorphic_sites -O preprocessing/${sample}_recal_data.table --tmp-dir $tmp_dir"
     echo $cmd
     eval $cmd
 fi
 
 if [ -f preprocessing/${sample}_recal_data.table ] && [ ! -f preprocessing/${sample}_recal.bam ]; then
-    cmd="gatk ApplyBQSR -I preprocessing/${sample}_marked_dup.bam -R $reference --bqsr-recal-file preprocessing/${sample}_recal_data.table -O preprocessing/${sample}_recal.bam --tmp-dir ~/scratch"
+    cmd="gatk ApplyBQSR -I preprocessing/${sample}_marked_dup.bam -R $reference --bqsr-recal-file preprocessing/${sample}_recal_data.table -O preprocessing/${sample}_recal.bam --tmp-dir $tmp_dir"
     echo $cmd
     eval $cmd
 fi
