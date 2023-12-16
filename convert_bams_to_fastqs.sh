@@ -2,7 +2,7 @@
 #SBATCH -c 1
 #SBATCH -t 0-01:00
 #SBATCH -p short
-#SBATCH --mem 8000
+#SBATCH --mem 4000
 #SBATCH -o run_bam2fq_%A_%a.out
 #SBATCH --array=0-17
 #SBATCH --mail-user=alexander_gorelick@hms.harvard.edu  # Email to which notifications will be sent
