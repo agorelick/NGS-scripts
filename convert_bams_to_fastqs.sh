@@ -8,7 +8,9 @@
 #SBATCH --mail-user=alexander_gorelick@hms.harvard.edu  # Email to which notifications will be sent
 #SBATCH --mail-type=ALL
 
-# This pipeline should be run from FASTQ files to ensure that all preprocessing is standardized. In case you only have access to BAM files and you aren't sure how they were generated, you can convert them back to FASTQs with this script.
+## This pipeline should be run from FASTQ files to ensure that all preprocessing is standardized. 
+## In case you only have access to BAM files and you aren't sure how they were generated, you can
+## convert them back to FASTQs with this script.
 
 module load picard/2.27.5
 mkdir -p 00_fastq
