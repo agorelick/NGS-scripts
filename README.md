@@ -63,9 +63,9 @@ wget https://github.com/odelaneau/GLIMPSE/releases/download/v2.0.0/GLIMPSE2_spli
 Next, copy `run_glimpse.sh` to the directory containing the newly-created `preprocessing/` subdirectory, which contains a bam file from a normal tissue sample. Edit the script to replace the name of the normal sample (in the example, it is C157N1). Then run the script with `sbatch run_glimpse.sh`.
 
 
+# Older notes for Alex. Not instructions!
 
-
-### Obtaining het-SNPs from lpWGS data analyzed by Azenta
+## Obtaining het-SNPs from lpWGS data analyzed by Azenta
 Azenta's lpWGS analysis pipeline includes genotype imputation: https://web.azenta.com/genotyping-arrays-low-pass-genome-sequencing. These are provided in files named `analysis/[samplename].vcf.gz` (with genome build b37). You can subset these for only high-confidence heterozygous SNPs via the following bcftools command. Note that we need `-c 0` to be added to make sure that the output has field "AC" required by SHAPEIT4 for phasing.
 
 ```
