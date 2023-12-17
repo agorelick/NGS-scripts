@@ -36,7 +36,7 @@ Copy the run_processing.sh script to a location on *o2* containing the subdirect
 
 Next, modify the script to use your sample names and vial names (which refer to the name from the fastq file). Also edit the number of jobs in the header `#SBATCH --array=0-8` for your number of samples. These are indexed at 0, so this example is for 9 samples to be run parallel.
 
-Note: the adapter sequences in the cutadapt section are for Illumina universal adapter sequences, which is what Azenta uses for lpWGS. You can check this by running FASTQC on your FASTQ files, and change the adapter sequences if necessary.
+Note: the adapter sequences in the cutadapt section are for Illumina universal adapter sequences, which is what Azenta uses for lpWGS. You can check this by running FASTQC (https://www.bioinformatics.babraham.ac.uk/projects/fastqc/) on your FASTQ files, and then changing the adapter sequences if necessary.
 
 Also note: This script is setup for alignment to human reference genome b37 (Broad's version of GRCh37/hg19). This can be changed to b38/GRCh38/hg38, but as of 12/16/2023 Alex's haplotype-aware copy number calling pipeline requires b37.
 
