@@ -30,8 +30,8 @@ mkdir -p cutadapt
 mkdir -p preprocessing
 
 # use BWAIndex/version0.6.0 (needs to be greater than 0.5.* for bwa>=0.7)
-reference='/home/alg2264/data/alex/reference_data/assemblies/Homo_sapiens_assembly19/Homo_sapiens_assembly19.fasta'
-polymorphic_sites='/home/alg2264/data/alex/reference_data/dbSNP/dbSNP_GRCh37/00-common_all.vcf.gz'
+reference='/n/data1/hms/genetics/naxerova/lab/alex/reference_data/assemblies/Homo_sapiens_assembly19/Homo_sapiens_assembly19.fasta'
+polymorphic_sites='/n/data1/hms/genetics/naxerova/lab/alex/reference_data/dbSNP/dbSNP_GRCh37/00-common_all.vcf.gz'
 
 # replace this with your directory for large temporary files.
 tmp_dir='~/scratch'
