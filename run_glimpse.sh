@@ -30,8 +30,9 @@ chr=${SLURM_ARRAY_TASK_ID}
 BAM="preprocessing/C157N1_recal.bam"
 OUTPUT="glimpse/C157N1"
 
-REF="/home/alg2264/data/alex/reference_data/GLIMPSE/reference_panel/split/1000GP.chr${chr}"
-CHUNKS="/home/alg2264/data/alex/reference_data/GLIMPSE/chunks/chunks.chr${chr}.txt"
+REF="/n/data1/hms/genetics/naxerova/lab/alex/reference_data/GLIMPSE/reference_panel/split/1000GP.chr${chr}"
+CHUNKS="/n/data1/hms/genetics/naxerova/lab/alex/reference_data/GLIMPSE/chunks/chunks.chr${chr}.txt"
+
 while IFS="" read -r LINE || [ -n "$LINE" ];
 do
     printf -v ID "%02d" $(echo $LINE | cut -d" " -f1)
