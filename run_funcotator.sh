@@ -19,8 +19,8 @@ tmp_dir="/home/alg2264/scratch"
 input_vcf=mutect2/C157_filtered_passed.vcf.gz
 overall_maf=somatic_maf/C157_filtered_passed.maf
 anno_maf=somatic_maf/C157_filtered_passed_anno.maf
-
-## declare sample array
+ 
+## declare sample array (must match order in the VCF file!)
 declare -a samples=("C157B1" "C157B2" "C157Di1" "C157Di2" "C157LN4" "C157N1" "C157P10" "C157P1" "C157P2" "C157P3" "C157P4" "C157P6" "C157P9" "C157TD1" "C157TD2a" "C157TD2b" "C157TD3" "C157TD7")
 
 
