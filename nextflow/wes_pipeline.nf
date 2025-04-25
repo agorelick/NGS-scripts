@@ -1,8 +1,64 @@
+if (!params.csv) {
+    error "Missing required parameter: --csv"
+}
+
+
+// Load the CSV into a list of maps (1 per row)
+// params.csv is defined from the nextflow run command via --csv <CSV_FILE>
+def df = file(params.csv)
+           .text
+           .split('\n')
+           .collect { it.trim() }
+           .findAll { it }  // remove empty lines
+
+def headers = df[0].split(',')  // column names
+def rows = df[1..-1].collect { line -> 
+    def fields = line.split(',')
+    [ : ].withDefault { null }.tap { map ->
+        headers.eachWithIndex { h, i ->
+            if (i < fields.size()) {
+                map[h] = fields[i]
+            } else {
+                map[h] = null  // or some default value
+            }
+        }
+    }
+}
+
+// Just to test if parsing works
+println "Parsed headers: ${headers}"
+println "First row: ${rows[0]}"
+
+
+// Create tuple channel: (sample, fq_prefix, order)
+def sample_ch = Channel.from( rows.collect { [it.sample, it.fq_prefix, it.order] } )
+
+// Set scalar params using first row with non-null value
+def first_full_row = rows.find { it.patient }  // or any other required field
+params.patient        = first_full_row.patient
+params.normal_sample = first_full_row.normal_sample
+params.sex            = first_full_row.sex
+params.fq_dir         = first_full_row.fq_dir
+params.nextflow_dir    = first_full_row.nextflow_dir
+params.output_dir   = first_full_row.output_dir
+
+// dynamically generated parameters
+params.bam_dir = "${params.output_dir}/${params.patient}/bams"
+params.maf_dir = "${params.output_dir}/${params.patient}/mafs"
+params.mosdepth_dir = "${params.output_dir}/${params.patient}/mosdepth"
+params.mtbam_dir = "${params.output_dir}/${params.patient}/mtbams"
+params.haplocheck_dir = "${params.output_dir}/${params.patient}/haplocheck"
+params.ascat_dir = "${params.output_dir}/${params.patient}/ascat"
+params.tmp_dir = "${params.nextflow_dir}/${params.patient}/tmp_files"
+
+
 /*
- * Pipeline parameters
+ * Additional pipeline parameters (use for all WES data)
  */
 
 // Genome reference files
+params.build = "hg38"
+params.mt_label = "chrM"
 params.ref_fasta = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/assemblies/Homo_sapiens_NCBI_GRCh38/NCBI/GRCh38/Sequence/BWAIndex/genome.fa"
 params.ref_amb = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/assemblies/Homo_sapiens_NCBI_GRCh38/NCBI/GRCh38/Sequence/BWAIndex/genome.fa.amb"
 params.ref_ann = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/assemblies/Homo_sapiens_NCBI_GRCh38/NCBI/GRCh38/Sequence/BWAIndex/genome.fa.ann"
@@ -29,6 +85,42 @@ params.loci_prefix = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/asc
 params.gccontentfile = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/ascat/GC_G1000_hg38.txt"
 params.replictimingfile = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/ascat/RT_G1000_hg38.txt"
 
+
+println "params.nextflow_dir: ${params.nextflow_dir}"
+println "params.output_dir: ${params.output_dir}"
+println "params.bam_dir: ${params.bam_dir}"
+
+
+process MAKE_DIRS {
+    tag "mkdirs"
+    executor 'local'
+
+    input:
+    val bam_dir
+    val maf_dir
+    val mosdepth_dir
+    val mtbam_dir
+    val haplocheck_dir
+    val ascat_dir
+    val tmp_dir
+
+    output:
+    path "mkdir_done.txt"
+
+    """
+    mkdir -p ${bam_dir}
+    mkdir -p ${maf_dir}
+    mkdir -p ${mosdepth_dir}
+    mkdir -p ${mtbam_dir}
+    mkdir -p ${haplocheck_dir}
+    mkdir -p ${ascat_dir}
+    mkdir -p ${tmp_dir}
+
+    touch mkdir_done.txt
+    """
+}
+
+
 /*
  * Trim Illumina Universal Adapters
  */
@@ -42,13 +134,12 @@ process TRIM_ADAPTERS {
     queue 'short'
 
     input:
-    val fq_prefix
-    val sample
-    val sample_index
+    tuple val(sample), val(fq_prefix), val(sample_order)
     val fq_dir
+    val make_dirs_ch
 
     output:
-    tuple val(sample), val(sample_index), path("${sample}_trimmed_R1.fastq.gz"), path("${sample}_trimmed_R2.fastq.gz")
+    tuple val(sample), val(sample_order), path("${sample}_trimmed_R1.fastq.gz"), path("${sample}_trimmed_R2.fastq.gz")
 
     script:
     """
@@ -73,7 +164,7 @@ process BWA_MEM {
     queue 'short'
 
     input:
-    tuple val(sample), val(sample_index), path(trimmed_fq1), path(trimmed_fq2)
+    tuple val(sample), val(sample_order), path(trimmed_fq1), path(trimmed_fq2)
     tuple path(ref_fasta), path(ref_amb), path(ref_ann), path(ref_bwt), path(ref_fai), path(ref_pac), path(ref_sa), path(ref_dict)
 
     output:
@@ -83,7 +174,7 @@ process BWA_MEM {
     """
     module load gcc/6.2.0 bwa/0.7.15
 
-    bwa mem -M -t 8 -R '@RG\\tID:${sample_index}\\tSM:${sample}\\tPL:Illumina' ${ref_fasta} ${trimmed_fq1} ${trimmed_fq2} > ${sample}_raw.sam
+    bwa mem -M -t 8 -R '@RG\\tID:${sample_order}\\tSM:${sample}\\tPL:Illumina' ${ref_fasta} ${trimmed_fq1} ${trimmed_fq2} > ${sample}_raw.sam
 
     """
 }
@@ -94,8 +185,8 @@ process BWA_MEM {
 process GATK_MARKDUP {
 
     tag "$sample"
-    cpus 20
-    memory '24GB'
+    cpus 12
+    memory '48GB'
     time '24h'
     executor 'slurm'
     queue 'medium'
@@ -114,7 +205,7 @@ process GATK_MARKDUP {
     module load gcc/6.2.0 gatk/4.1.9.0
     mkdir -p ${bam_dir}
 
-    gatk MarkDuplicatesSpark --input ${raw_sam} --output ${sample}_marked_dup.bam --tmp-dir ${tmp_dir} --reference ${ref_fasta} -M ${bam_dir}/${sample}_marked_dup_metrics.txt --conf 'spark.executor.cores=20'
+    gatk MarkDuplicatesSpark --input ${raw_sam} --output ${sample}_marked_dup.bam --tmp-dir ${tmp_dir} --reference ${ref_fasta} -M ${bam_dir}/${sample}_marked_dup_metrics.txt --conf 'spark.executor.cores=10' --java-options "-Djava.io.tmpdir=${tmp_dir}"
     """
 }
 
@@ -125,8 +216,8 @@ process GATK_BASERECAL {
 
     tag "$sample"
     cpus 16
-    memory '16B'
-    time '8h'
+    memory '24GB'
+    time '12h'
     executor 'slurm'
     queue 'short'
 
@@ -186,9 +277,9 @@ process GATK_APPLYBQSR {
 process GATK_MUTECT2 {
 
     tag "$region"
-    cpus 16
-    memory '16GB'
-    time '2h'
+    cpus 18
+    memory '32GB'
+    time '4h'
     executor 'slurm'
     queue 'short'
 
@@ -352,7 +443,7 @@ process VCF2MAF {
 
 
     input:
-    val sample
+    tuple val(sample), val(fq_prefix), val(sample_order)
     path filtered_vcf
     path filtered_vcf_tbi
 
@@ -549,6 +640,7 @@ process GET_CNALIGN_OBJ {
 
     script:
     """
+    echo "Generating CNalign data object ..."
     conda run -n CNalign /home/alg2264/miniconda3/envs/CNalign/bin/Rscript /home/alg2264/repos/CNalign/scripts/run_get_CNalign_obj_for_snp_data.R \
         --ascat_dir '.' \
         --sex ${sex} \
@@ -592,11 +684,6 @@ workflow {
     panel_of_normals_idx = file(params.panel_of_normals_idx)
     panel_of_normals_files = tuple(panel_of_normals, panel_of_normals_idx)
 
-    // Sample and index channels
-    fq_prefix_ch = Channel.of(params.fq_prefix).flatten()
-    sample_ch = Channel.of(params.sample).flatten()
-    sample_index_ch = Channel.of(params.sample_index).flatten()
-
     // channel of genomic chunks
     genome_chunk_ch = Channel.fromPath(params.genome_chunks)
                     .splitCsv(header: false, sep: ",", strip: true)
@@ -607,8 +694,11 @@ workflow {
     // bam preprocessing
     // =============================
 
+    // run process to make all the expected directories for this patient
+    make_dirs_ch = MAKE_DIRS(params.bam_dir, params.maf_dir, params.mosdepth_dir, params.mtbam_dir, params.haplocheck_dir, params.ascat_dir, params.tmp_dir)
+
     // Adapter trimming
-    trim_adapt_output = TRIM_ADAPTERS(fq_prefix_ch, sample_ch, sample_index_ch, params.fq_dir)
+    trim_adapt_output = TRIM_ADAPTERS(sample_ch, params.fq_dir, make_dirs_ch)
 
     // BWA-MEM alignment
     bwa_mem_output = BWA_MEM(trim_adapt_output, ref_files)
@@ -686,8 +776,8 @@ workflow {
     // run for each tuple (which is a combination of one tumor and the same repeated normal)
     prep_data_output = PREP_CNA_DATA(prep_input_ch, params.patient, params.sex, params.build, params.targets_bed, params.allelecounter_exe, params.alleles_prefix, params.loci_prefix)
 
-    all_allelecounter_files_ch = prep_data_output.collect()
-    cnalign_output = GET_CNALIGN_OBJ(all_allelecounter_files_ch, params.normal_sample, params.patient, params.sex, params.build, params.gccontentfile, params.replictimingfile)
+    //all_allelecounter_files_ch = prep_data_output.collect()
+    //cnalign_output = GET_CNALIGN_OBJ(all_allelecounter_files_ch, params.normal_sample, params.patient, params.sex, params.build, params.gccontentfile, params.replictimingfile)
 }
 
 
