@@ -85,7 +85,6 @@ params.loci_prefix = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/asc
 params.gccontentfile = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/ascat/GC_G1000_hg38.txt"
 params.replictimingfile = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/ascat/RT_G1000_hg38.txt"
 
-
 println "params.nextflow_dir: ${params.nextflow_dir}"
 println "params.output_dir: ${params.output_dir}"
 println "params.bam_dir: ${params.bam_dir}"
@@ -279,7 +278,7 @@ process GATK_MUTECT2 {
     tag "$region"
     cpus 18
     memory '32GB'
-    time '4h'
+    time '12h'  // 2h is usually sufficient
     executor 'slurm'
     queue 'short'
 
@@ -620,7 +619,7 @@ process GET_CNALIGN_OBJ {
     tag "$patient"
     cpus 8
     memory '80GB'
-    time '1h'
+    time '3h'
     executor 'slurm'
     queue 'short'
 
@@ -636,19 +635,19 @@ process GET_CNALIGN_OBJ {
     path replictimingfile
     
     output:
-    path "${patient}_CNalign_obj.Rdata"
+    path "${patient}_CNalign_obj.rds"
 
     script:
     """
     echo "Generating CNalign data object ..."
-    conda run -n CNalign /home/alg2264/miniconda3/envs/CNalign/bin/Rscript /home/alg2264/repos/CNalign/scripts/run_get_CNalign_obj_for_snp_data.R \
-        --ascat_dir '.' \
+    conda run -n CNalign /home/alg2264/miniconda3/envs/CNalign/bin/Rscript /home/alg2264/repos/CNalign/scripts/merge_alleleCounter_data.R \
+        --patient ${patient} \
+        --normal_sample ${normal_sample} \
         --sex ${sex} \
-        --genome ${build} \
-        --normal_name ${normal_sample} \
-        --gc_file ${GCcontentfile} \
-        --rt_file ${replictimingfile}
-        --obj_file "${patient}_CNalign_obj.Rdata"
+        --build ${build} \
+        --GCcontentfile ${GCcontentfile} \
+        --replictimingfile ${replictimingfile} \
+        --obj_file "${patient}_CNalign_obj.rds"
     """
 }
 
@@ -775,9 +774,8 @@ workflow {
 
     // run for each tuple (which is a combination of one tumor and the same repeated normal)
     prep_data_output = PREP_CNA_DATA(prep_input_ch, params.patient, params.sex, params.build, params.targets_bed, params.allelecounter_exe, params.alleles_prefix, params.loci_prefix)
-
-    //all_allelecounter_files_ch = prep_data_output.collect()
-    //cnalign_output = GET_CNALIGN_OBJ(all_allelecounter_files_ch, params.normal_sample, params.patient, params.sex, params.build, params.gccontentfile, params.replictimingfile)
+    all_allelecounter_files_ch = prep_data_output.collect()
+    cnalign_output = GET_CNALIGN_OBJ(all_allelecounter_files_ch, params.normal_sample, params.patient, params.sex, params.build, params.gccontentfile, params.replictimingfile)
 }
 
 
