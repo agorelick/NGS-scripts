@@ -178,17 +178,18 @@ process BWA_MEM {
     """
 }
 
+
 /*
- * Run GATK MarkDuplicates
+ * Run picard SortSam
  */
-process GATK_MARKDUP {
+process PICARD_SORTSAM {
 
     tag "$sample"
-    cpus 12
-    memory '48GB'
-    time '24h'
+    cpus 8
+    memory '72GB'
+    time '3h'
     executor 'slurm'
-    queue 'medium'
+    queue 'short'
 
     input:
     tuple val(sample), path(raw_sam)
@@ -197,14 +198,48 @@ process GATK_MARKDUP {
     tuple path(ref_fasta), path(ref_amb), path(ref_ann), path(ref_bwt), path(ref_fai), path(ref_pac), path(ref_sa), path(ref_dict)
 
     output:
-    tuple val(sample), path("${sample}_marked_dup.bam"), path("${sample}_marked_dup.bam.bai")
+    tuple val(sample), path("${sample}_sorted.bam"), path("${sample}_sorted.bai")
 
     script:
     """
-    module load gcc/6.2.0 gatk/4.1.9.0
     mkdir -p ${bam_dir}
 
-    gatk MarkDuplicatesSpark --input ${raw_sam} --output ${sample}_marked_dup.bam --tmp-dir ${tmp_dir} --reference ${ref_fasta} -M ${bam_dir}/${sample}_marked_dup_metrics.txt --conf 'spark.executor.cores=10' --java-options "-Djava.io.tmpdir=${tmp_dir}"
+    module load picard/2.27.5
+    java -jar $PICARD/picard.jar SortSam --INPUT ${raw_sam} --OUTPUT ${sample}_sorted.bam --SORT_ORDER coordinate --CREATE_INDEX true --TMP_DIR ${tmp_dir} -R ${ref_fasta}  
+    """
+}
+
+
+
+/*
+ * Run GATK MarkDuplicates
+ */
+process GATK_MARKDUP {
+
+    tag "$sample"
+    cpus 8
+    memory '72GB'
+    time '12h'
+    executor 'slurm'
+    queue 'short'
+
+    input:
+    tuple val(sample), path(sorted_bam), path(sorted_bai)
+    path bam_dir
+    path tmp_dir
+    tuple path(ref_fasta), path(ref_amb), path(ref_ann), path(ref_bwt), path(ref_fai), path(ref_pac), path(ref_sa), path(ref_dict)
+
+    output:
+    tuple val(sample), path("${sample}_marked_dup.bam"), path("${sample}_marked_dup.bai")
+
+    script:
+    """
+
+    mkdir -p ${bam_dir}
+    module load picard/2.27.5
+    java -Xmx60g -jar $PICARD/picard.jar MarkDuplicates --INPUT ${sorted_bam} --OUTPUT ${sample}_marked_dup.bam --ASSUME_SORT_ORDER coordinate --CREATE_INDEX true --TMP_DIR ${tmp_dir} -R ${ref_fasta} --METRICS_FILE ${bam_dir}/${sample}_marked_dup_metrics.txt
+
+ 
     """
 }
 
@@ -618,8 +653,8 @@ process GET_CNALIGN_OBJ {
 
     tag "$patient"
     cpus 8
-    memory '80GB'
-    time '3h'
+    memory '60GB'
+    time '4h'
     executor 'slurm'
     queue 'short'
 
@@ -636,6 +671,10 @@ process GET_CNALIGN_OBJ {
     
     output:
     path "${patient}_CNalign_obj.rds"
+    path "${patient}_CNalign_obj_mpcf.rds"
+    path "${patient}_CNalign_obj_mpcf_hisens.rds"
+
+
 
     script:
     """
@@ -702,8 +741,11 @@ workflow {
     // BWA-MEM alignment
     bwa_mem_output = BWA_MEM(trim_adapt_output, ref_files)
 
-    // Run MarkDuplicates only on valid samples
-    markdup_output = GATK_MARKDUP(bwa_mem_output, params.bam_dir, params.tmp_dir, ref_files)
+    // Run SortSam on valid samples
+    sortsam_output = PICARD_SORTSAM(bwa_mem_output, params.bam_dir, params.tmp_dir, ref_files)
+
+    // Run MarkDuplicates on sorted bam files
+    markdup_output = GATK_MARKDUP(sortsam_output, params.bam_dir, params.tmp_dir, ref_files)
 
     // BaseRecalibrator
     baserecal_output = GATK_BASERECAL(markdup_output, polymorphic_sites_files, params.tmp_dir, ref_files)
