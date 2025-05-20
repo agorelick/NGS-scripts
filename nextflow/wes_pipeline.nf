@@ -205,7 +205,7 @@ process PICARD_SORTSAM {
     mkdir -p ${bam_dir}
 
     module load picard/2.27.5
-    java -jar $PICARD/picard.jar SortSam --INPUT ${raw_sam} --OUTPUT ${sample}_sorted.bam --SORT_ORDER coordinate --CREATE_INDEX true --TMP_DIR ${tmp_dir} -R ${ref_fasta}  
+    java -jar \$PICARD/picard.jar SortSam --INPUT ${raw_sam} --OUTPUT ${sample}_sorted.bam --SORT_ORDER coordinate --CREATE_INDEX true --TMP_DIR ${tmp_dir} -R ${ref_fasta}  
     """
 }
 
@@ -214,7 +214,7 @@ process PICARD_SORTSAM {
 /*
  * Run GATK MarkDuplicates
  */
-process GATK_MARKDUP {
+process PICARD_MARKDUP {
 
     tag "$sample"
     cpus 8
@@ -237,7 +237,7 @@ process GATK_MARKDUP {
 
     mkdir -p ${bam_dir}
     module load picard/2.27.5
-    java -Xmx60g -jar $PICARD/picard.jar MarkDuplicates --INPUT ${sorted_bam} --OUTPUT ${sample}_marked_dup.bam --ASSUME_SORT_ORDER coordinate --CREATE_INDEX true --TMP_DIR ${tmp_dir} -R ${ref_fasta} --METRICS_FILE ${bam_dir}/${sample}_marked_dup_metrics.txt
+    java -Xmx60g -jar \$PICARD/picard.jar MarkDuplicates --INPUT ${sorted_bam} --OUTPUT ${sample}_marked_dup.bam --ASSUME_SORT_ORDER coordinate --CREATE_INDEX true --TMP_DIR ${tmp_dir} -R ${ref_fasta} --METRICS_FILE ${bam_dir}/${sample}_marked_dup_metrics.txt
 
  
     """
@@ -468,8 +468,8 @@ process VCF2MAF {
 
     tag "$sample"
     cpus 1
-    memory '4GB'
-    time '20m'
+    memory '16GB'
+    time '1h'
     executor 'slurm'
     queue 'short'
 
@@ -745,7 +745,7 @@ workflow {
     sortsam_output = PICARD_SORTSAM(bwa_mem_output, params.bam_dir, params.tmp_dir, ref_files)
 
     // Run MarkDuplicates on sorted bam files
-    markdup_output = GATK_MARKDUP(sortsam_output, params.bam_dir, params.tmp_dir, ref_files)
+    markdup_output = PICARD_MARKDUP(sortsam_output, params.bam_dir, params.tmp_dir, ref_files)
 
     // BaseRecalibrator
     baserecal_output = GATK_BASERECAL(markdup_output, polymorphic_sites_files, params.tmp_dir, ref_files)
