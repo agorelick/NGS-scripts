@@ -44,6 +44,7 @@ params.output_dir   = first_full_row.output_dir
 
 // dynamically generated parameters
 params.bam_dir = "${params.output_dir}/${params.patient}/bams"
+params.mutect_dir = "${params.output_dir}/${params.patient}/mutect"
 params.maf_dir = "${params.output_dir}/${params.patient}/mafs"
 params.mosdepth_dir = "${params.output_dir}/${params.patient}/mosdepth"
 params.mtbam_dir = "${params.output_dir}/${params.patient}/mtbams"
@@ -102,6 +103,7 @@ process MAKE_DIRS {
     val haplocheck_dir
     val ascat_dir
     val tmp_dir
+    val mutect_dir
 
     output:
     path "mkdir_done.txt"
@@ -114,6 +116,7 @@ process MAKE_DIRS {
     mkdir -p ${haplocheck_dir}
     mkdir -p ${ascat_dir}
     mkdir -p ${tmp_dir}
+    mkdir -p ${mutect_dir}
 
     touch mkdir_done.txt
     """
@@ -317,7 +320,7 @@ process GATK_MUTECT2 {
     executor 'slurm'
     queue 'short'
 
-    publishDir params.output_dir, mode: 'copy'
+    publishDir params.mutect_dir, mode: 'copy'
 
     input:
     tuple val(chr), val(start), val(end), val(region)               // split genome regions into equal sized chunks for parallelization
@@ -380,7 +383,7 @@ process MERGE_REGIONS {
     path all_stats
     path all_f1r2
 
-    publishDir params.output_dir, mode: 'copy'
+    publishDir params.mutect_dir, mode: 'copy'
 
     output:
     tuple path("${patient}_raw.vcf.gz"), path("${patient}_raw.vcf.gz.tbi"), path("${patient}_raw.vcf.gz.stats"), path("${patient}_raw.artifact-prior.tar.gz")
@@ -424,7 +427,7 @@ process FILTER_MUTECT_CALLS {
     executor 'slurm'
     queue 'short'
 
-    publishDir params.output_dir, mode: 'copy'
+    publishDir params.mutect_dir, mode: 'copy'
 
     input:
     val patient
@@ -733,7 +736,7 @@ workflow {
     // =============================
 
     // run process to make all the expected directories for this patient
-    make_dirs_ch = MAKE_DIRS(params.bam_dir, params.maf_dir, params.mosdepth_dir, params.mtbam_dir, params.haplocheck_dir, params.ascat_dir, params.tmp_dir)
+    make_dirs_ch = MAKE_DIRS(params.bam_dir, params.maf_dir, params.mosdepth_dir, params.mtbam_dir, params.haplocheck_dir, params.ascat_dir, params.tmp_dir, params.mutect_dir)
 
     // Adapter trimming
     trim_adapt_output = TRIM_ADAPTERS(sample_ch, params.fq_dir, make_dirs_ch)
@@ -767,7 +770,7 @@ workflow {
     // =============================
 
     // call mutations in multi-sample paired T/N mode
-    mutect_output = GATK_MUTECT2(genome_chunk_ch, params.targets_bed, all_bams_ch, all_bam_indices_ch, params.patient, params.normal_sample, params.output_dir, polymorphic_sites_files, germline_resource_files, panel_of_normals_files, ref_files)
+    mutect_output = GATK_MUTECT2(genome_chunk_ch, params.targets_bed, all_bams_ch, all_bam_indices_ch, params.patient, params.normal_sample, params.mutect_dir, polymorphic_sites_files, germline_resource_files, panel_of_normals_files, ref_files)
 
     // Extracting each element into separate channels
     region_ch = mutect_output.map { it[0] }
