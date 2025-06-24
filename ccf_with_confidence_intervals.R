@@ -62,9 +62,9 @@ estimate_ccf = function(purity, total_copies, mutant_copies, t_alt_count, t_dept
 library(data.table)
 d <- fread('<input_data.tsv>')
 d[,t_var_freq:=t_alt_count / (t_alt_count + t_ref_count)]
-d[,total_copies:=major_cn + minor_cn]
+d[,total_copies:=round(major_cn + minor_cn)]
 d[,t_depth:=t_alt_count + t_ref_count]
-d[, mutant_copies := expected_mutant_copies(t_var_freq, total_copies, purity), by = seq_len(nrow(d))]
+d[, mutant_copies := expected_mutant_copies(t_var_freq, round(total_copies), purity), by = seq_len(nrow(d))]
 d[, c('ccf','ccf_lwr95','ccf_upr95') := estimate_ccf(purity, total_copies, mutant_copies, t_alt_count, t_depth), by = seq_len(nrow(d))]
 d[ccf==0 & is.na(ccf_lwr95), ccf_lwr95:=0]
 d[ccf==1 & is.na(ccf_upr95), ccf_upr95:=1]
