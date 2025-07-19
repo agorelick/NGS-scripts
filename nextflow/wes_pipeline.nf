@@ -145,9 +145,7 @@ process TRIM_ADAPTERS {
 
     script:
     """
-    module load gcc/9.2.0 python/3.8.12 cutadapt/4.1
-
-    cutadapt -a AGATCGGAAGAGCACACGTCTGAACTCCAGTCA -A AGATCGGAAGAGCGTCGTGTAGGGAAAGAGTGT --minimum-length 20 --cores=8 \\
+    conda run -n cutadapt cutadapt -a AGATCGGAAGAGCACACGTCTGAACTCCAGTCA -A AGATCGGAAGAGCGTCGTGTAGGGAAAGAGTGT --minimum-length 20 --cores=8 \\
         -o ${sample}_trimmed_R1.fastq.gz -p ${sample}_trimmed_R2.fastq.gz \\
         ${fq_dir}/${fq_prefix}_R1_001.fastq.gz ${fq_dir}/${fq_prefix}_R2_001.fastq.gz
     """
@@ -174,7 +172,7 @@ process BWA_MEM {
 
     script:
     """
-    module load gcc/6.2.0 bwa/0.7.15
+    module load gcc/14.2.0 bwa/0.7.18
 
     bwa mem -M -t 8 -R '@RG\\tID:${sample_order}\\tSM:${sample}\\tPL:Illumina' ${ref_fasta} ${trimmed_fq1} ${trimmed_fq2} > ${sample}_raw.sam
 
@@ -206,9 +204,7 @@ process PICARD_SORTSAM {
     script:
     """
     mkdir -p ${bam_dir}
-
-    module load picard/2.27.5
-    java -jar \$PICARD/picard.jar SortSam --INPUT ${raw_sam} --OUTPUT ${sample}_sorted.bam --SORT_ORDER coordinate --CREATE_INDEX true --TMP_DIR ${tmp_dir} -R ${ref_fasta}  
+    java -Xmx60g -jar /home/alg2264/install/picard.jar SortSam --INPUT ${raw_sam} --OUTPUT ${sample}_sorted.bam --SORT_ORDER coordinate --CREATE_INDEX true --TMP_DIR ${tmp_dir} -R ${ref_fasta}  
     """
 }
 
@@ -239,8 +235,7 @@ process PICARD_MARKDUP {
     """
 
     mkdir -p ${bam_dir}
-    module load picard/2.27.5
-    java -Xmx60g -jar \$PICARD/picard.jar MarkDuplicates --INPUT ${sorted_bam} --OUTPUT ${sample}_marked_dup.bam --ASSUME_SORT_ORDER coordinate --CREATE_INDEX true --TMP_DIR ${tmp_dir} -R ${ref_fasta} --METRICS_FILE ${bam_dir}/${sample}_marked_dup_metrics.txt
+    java -Xmx60g -jar /home/alg2264/install/picard.jar MarkDuplicates --INPUT ${sorted_bam} --OUTPUT ${sample}_marked_dup.bam --ASSUME_SORT_ORDER coordinate --CREATE_INDEX true --TMP_DIR ${tmp_dir} -R ${ref_fasta} --METRICS_FILE ${bam_dir}/${sample}_marked_dup_metrics.txt
 
  
     """
@@ -269,7 +264,7 @@ process GATK_BASERECAL {
 
     script:
     """
-    module load gcc/6.2.0 gatk/4.1.9.0
+    module load gatk/4.6.1.0
 
     gatk BaseRecalibrator -I ${markdup_bam} -R ${ref_fasta} --known-sites ${polymorphic_sites} -O ${sample}_recal_data.table --tmp-dir ${tmp_dir}
     """
@@ -300,8 +295,7 @@ process GATK_APPLYBQSR {
 
     script:
     """
-    module load gcc/6.2.0 gatk/4.1.9.0
-    echo "foo"
+    module load gatk/4.6.1.0
     gatk ApplyBQSR -R ${ref_fasta} -I ${markdup_bam} --bqsr-recal-file ${recal_data_table} -O ${sample}.bam --tmp-dir ${tmp_dir}
 
     """
@@ -344,12 +338,11 @@ process GATK_MUTECT2 {
     """
 
     # subset the bed file for regions within the specified range
-    module load gcc/9.2.0 bedtools/2.30.0
-
+    module load bedtools/2.31.0
     echo -e "${chr}\t${start}\t${end}" | bedtools intersect -a ${bed_file} -b - > regions_${region}.bed
 
     # run mutect2 for this region
-    module load gcc/6.2.0 gatk/4.1.9.0
+    module load gatk/4.6.1.0
     gatk Mutect2 -R $ref_fasta \
         $bams_line \
         -normal $normal_sample \
@@ -394,8 +387,8 @@ process MERGE_REGIONS {
     def f1r2_line = all_f1r2.collect { f1r2file -> "-I ${f1r2file}" }.join(' ')
 
     """
-    module load gcc/6.2.0 gatk/4.1.9.0 bcftools/1.13
- 
+    module load bcftools/1.21 gcc/14.2.0 gatk/4.6.1.0
+
     # combine the VCF file for each genomic chunk into a single VCF
     bcftools concat ${vcf_line} -a > ${patient}_raw_unsorted.vcf
     bcftools sort ${patient}_raw_unsorted.vcf -O z -o ${patient}_raw.vcf.gz
@@ -440,8 +433,8 @@ process FILTER_MUTECT_CALLS {
 
     script:
     """
-    module load gcc/6.2.0 gatk/4.1.9.0 bcftools/1.13
- 
+    module load bcftools/1.21 gcc/14.2.0 gatk/4.6.1.0
+
     # FilterMutectCalls
     gatk FilterMutectCalls -R $ref_fasta -V $raw_vcf --orientation-bias-artifact-priors $raw_artifact_priors -O ${patient}_unfiltered.vcf.gz
 
@@ -455,7 +448,7 @@ process FILTER_MUTECT_CALLS {
     gatk IndexFeatureFile -I ${patient}_unfiltered_norm.vcf.gz --tmp-dir $tmp_dir
 
     # filtering mutations
-    bcftools view -i "%FILTER='PASS'" ${patient}_unfiltered_norm.vcf.gz | bcftools view -I -O z -o ${patient}_filtered.vcf.gz -
+    bcftools view -i "FILTER='PASS'" ${patient}_unfiltered_norm.vcf.gz | bcftools view -I -O z -o ${patient}_filtered.vcf.gz -
 
     # indexing filtered VCF
     gatk IndexFeatureFile -I ${patient}_filtered.vcf.gz --tmp-dir $tmp_dir
@@ -489,7 +482,7 @@ process VCF2MAF {
 
     script:
     """
-    module load gcc/9.2.0 bcftools/1.14 samtools/1.15.1
+    module load bcftools/1.21 gcc/14.2.0 gatk/4.6.1.0 samtools/1.21
 
     ## subset the multi-sample VCF for this sample
     bcftools view $filtered_vcf -s $sample > ${sample}.vcf
@@ -559,7 +552,7 @@ process SLICE_MTDNA {
 
     script:
     """
-    module load gcc/9.2.0 bcftools/1.14 samtools/1.15.1
+    module load gcc/14.2.0 samtools/1.21
     samtools view -hb ${sample}.bam -F 3840 -q 20 ${mt_label} > ${sample}_mt.bam
     samtools index ${sample}_mt.bam
     """
@@ -632,8 +625,7 @@ process PREP_CNA_DATA {
     script:
     """
 
-    module unload R/4.3.1
-    conda run -n CNalign Rscript /home/alg2264/repos/CNalign/scripts/run_ascat_prepareHTS.R \
+    conda run -n CNAlignR Rscript /home/alg2264/repos/CNAlignR/scripts/wes_preprocess.R \
         --patient ${patient} \
         --tumor_name ${tumor_sample} \
         --tumor_bam ${tumor_bam} \
@@ -682,7 +674,7 @@ process GET_CNALIGN_OBJ {
     script:
     """
     echo "Generating CNalign data object ..."
-    conda run -n CNalign /home/alg2264/miniconda3/envs/CNalign/bin/Rscript /home/alg2264/repos/CNalign/scripts/merge_alleleCounter_data.R \
+    conda run -n CNAlignR /home/alg2264/miniconda3/envs/CNAlignR/bin/Rscript /home/alg2264/repos/CNAlignR/scripts/wes_getinput.R \
         --patient ${patient} \
         --normal_sample ${normal_sample} \
         --sex ${sex} \
