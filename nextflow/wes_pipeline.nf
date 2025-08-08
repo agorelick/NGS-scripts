@@ -30,15 +30,14 @@ println "Parsed headers: ${headers}"
 println "First row: ${rows[0]}"
 
 
-// Create tuple channel: (sample, fq_prefix, order)
-def sample_ch = Channel.from( rows.collect { [it.sample, it.fq_prefix, it.order] } )
+// Create tuple channel: (sample, fq_prefix, fq_dir, order)
+def sample_ch = Channel.from( rows.collect { [it.sample, it.fq_prefix, it.fq_dir, it.order] } )
 
 // Set scalar params using first row with non-null value
 def first_full_row = rows.find { it.patient }  // or any other required field
 params.patient        = first_full_row.patient
 params.normal_sample = first_full_row.normal_sample
 params.sex            = first_full_row.sex
-params.fq_dir         = first_full_row.fq_dir
 params.nextflow_dir    = first_full_row.nextflow_dir
 params.output_dir   = first_full_row.output_dir
 
@@ -123,6 +122,7 @@ process MAKE_DIRS {
 }
 
 
+
 /*
  * Trim Illumina Universal Adapters
  */
@@ -136,8 +136,7 @@ process TRIM_ADAPTERS {
     queue 'short'
 
     input:
-    tuple val(sample), val(fq_prefix), val(sample_order)
-    val fq_dir
+    tuple val(sample), val(fq_prefix), val(fq_dir), val(sample_order)
     val make_dirs_ch
 
     output:
@@ -150,6 +149,7 @@ process TRIM_ADAPTERS {
         ${fq_dir}/${fq_prefix}_R1_001.fastq.gz ${fq_dir}/${fq_prefix}_R2_001.fastq.gz
     """
 }
+
 
 /*
  * Run BWA-MEM
@@ -363,7 +363,7 @@ process MERGE_REGIONS {
 
     tag "$patient"
     cpus 8
-    memory '16GB'
+    memory '32GB'
     time '30m'
     executor 'slurm'
     queue 'short'
@@ -473,7 +473,7 @@ process VCF2MAF {
 
 
     input:
-    tuple val(sample), val(fq_prefix), val(sample_order)
+    tuple val(sample), val(fq_prefix), val(fq_dir), val(sample_order)
     path filtered_vcf
     path filtered_vcf_tbi
 
@@ -731,7 +731,7 @@ workflow {
     make_dirs_ch = MAKE_DIRS(params.bam_dir, params.maf_dir, params.mosdepth_dir, params.mtbam_dir, params.haplocheck_dir, params.ascat_dir, params.tmp_dir, params.mutect_dir)
 
     // Adapter trimming
-    trim_adapt_output = TRIM_ADAPTERS(sample_ch, params.fq_dir, make_dirs_ch)
+    trim_adapt_output = TRIM_ADAPTERS(sample_ch, make_dirs_ch)
 
     // BWA-MEM alignment
     bwa_mem_output = BWA_MEM(trim_adapt_output, ref_files)
