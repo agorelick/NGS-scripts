@@ -1,0 +1,598 @@
+if (!params.csv) {
+    error "Missing required parameter: --csv"
+}
+
+
+// Load the CSV into a list of maps (1 per row)
+// params.csv is defined from the nextflow run command via --csv <CSV_FILE>
+def df = file(params.csv)
+           .text
+           .split('\n')
+           .collect { it.trim() }
+           .findAll { it }  // remove empty lines
+
+def headers = df[0].split(',')  // column names
+def rows = df[1..-1].collect { line -> 
+    def fields = line.split(',')
+    [ : ].withDefault { null }.tap { map ->
+        headers.eachWithIndex { h, i ->
+            if (i < fields.size()) {
+                map[h] = fields[i]
+            } else {
+                map[h] = null  // or some default value
+            }
+        }
+    }
+}
+
+// Just to test if parsing works
+println "Parsed headers: ${headers}"
+println "First row: ${rows[0]}"
+
+
+// Create tuple channel: (sample, fq_prefix, order)
+def sample_ch = Channel.from( rows.collect { [it.sample, it.fq_prefix, it.order] } )
+
+// Set scalar params using first row with non-null value
+def first_full_row = rows.find { it.patient }  // or any other required field
+params.patient        = first_full_row.patient
+params.normal_sample = first_full_row.normal_sample
+params.sex            = first_full_row.sex
+params.fq_dir         = first_full_row.fq_dir
+params.nextflow_dir    = first_full_row.nextflow_dir
+params.output_dir   = first_full_row.output_dir
+
+// dynamically generated parameters
+params.bam_dir = "${params.output_dir}/${params.patient}/bams"
+params.mutect_dir = "${params.output_dir}/${params.patient}/mutect"
+params.maf_dir = "${params.output_dir}/${params.patient}/mafs"
+params.mosdepth_dir = "${params.output_dir}/${params.patient}/mosdepth"
+params.mtbam_dir = "${params.output_dir}/${params.patient}/mtbams"
+params.haplocheck_dir = "${params.output_dir}/${params.patient}/haplocheck"
+params.ascat_dir = "${params.output_dir}/${params.patient}/ascat"
+params.glimpse_dir = "${params.output_dir}/${params.patient}/glimpse"
+params.tmp_dir = "${params.nextflow_dir}/${params.patient}/tmp_files"
+
+/*
+ * Additional pipeline parameters (use for all WES data)
+ */
+
+// Genome reference files
+params.build = "hg38"
+params.mt_label = "chrM"
+params.ref_fasta = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/assemblies/Homo_sapiens_NCBI_GRCh38/NCBI/GRCh38/Sequence/BWAIndex/genome.fa"
+params.ref_amb = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/assemblies/Homo_sapiens_NCBI_GRCh38/NCBI/GRCh38/Sequence/BWAIndex/genome.fa.amb"
+params.ref_ann = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/assemblies/Homo_sapiens_NCBI_GRCh38/NCBI/GRCh38/Sequence/BWAIndex/genome.fa.ann"
+params.ref_bwt = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/assemblies/Homo_sapiens_NCBI_GRCh38/NCBI/GRCh38/Sequence/BWAIndex/genome.fa.bwt"
+params.ref_fai = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/assemblies/Homo_sapiens_NCBI_GRCh38/NCBI/GRCh38/Sequence/BWAIndex/genome.fa.fai"
+params.ref_pac = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/assemblies/Homo_sapiens_NCBI_GRCh38/NCBI/GRCh38/Sequence/BWAIndex/genome.fa.pac"
+params.ref_sa = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/assemblies/Homo_sapiens_NCBI_GRCh38/NCBI/GRCh38/Sequence/BWAIndex/genome.fa.sa"
+params.ref_dict = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/assemblies/Homo_sapiens_NCBI_GRCh38/NCBI/GRCh38/Sequence/BWAIndex/genome.dict"
+
+// additional reference files with index files
+params.polymorphic_sites = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/dbSNP/dbSNP_GRCh38/00-common_all_renamedchrs.vcf.gz"
+params.polymorphic_sites_tbi = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/dbSNP/dbSNP_GRCh38/00-common_all_renamedchrs.vcf.gz.tbi"
+params.germline_resource = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/gnomad.raw.sites.hg38/af-only-gnomad.hg38.vcf.gz"
+params.germline_resource_tbi = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/gnomad.raw.sites.hg38/af-only-gnomad.hg38.vcf.gz.tbi"
+params.panel_of_normals = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/PoN/1000g_pon.hg38.vcf"
+params.panel_of_normals_idx = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/PoN/1000g_pon.hg38.vcf.idx"
+params.targets_bed = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/xgen-exome-hyb-panel/xgen-exome-hyb-panel-v2-targets-hg38.bed"
+params.genome_chunks = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/xgen-exome-hyb-panel/xgen-exome-hyb-panel-v2-targets-hg38_50Mbchunks.csv"
+
+// references for GLIMPSE2
+params.glimpse_refsplit_dir = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/GLIMPSE_GRCh38/reference_panel/split"
+params.glimpse_chunk_dir = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/GLIMPSE_GRCh38/chunks"
+
+
+
+// ascat/CNAlign params
+params.allelecounter_exe = "/home/alg2264/miniconda3/envs/CNalign/bin/alleleCounter"
+params.alleles_prefix = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/ascat/G1000_allelesAll_hg38/G1000_alleles_hg38_chr"
+params.loci_prefix = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/ascat/G1000_lociAll_hg38/G1000_loci_GRCh38_chr"
+params.gccontentfile = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/ascat/GC_G1000_hg38.txt"
+params.replictimingfile = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/ascat/RT_G1000_hg38.txt"
+
+println "params.nextflow_dir: ${params.nextflow_dir}"
+println "params.output_dir: ${params.output_dir}"
+println "params.bam_dir: ${params.bam_dir}"
+
+
+process MAKE_DIRS {
+    tag "mkdirs"
+    executor 'local'
+
+    input:
+    val bam_dir
+    val mosdepth_dir
+    val mtbam_dir
+    val haplocheck_dir
+    val ascat_dir
+    val tmp_dir
+
+    output:
+    path "mkdir_done.txt"
+
+    """
+    mkdir -p ${bam_dir}
+    mkdir -p ${mosdepth_dir}
+    mkdir -p ${mtbam_dir}
+    mkdir -p ${haplocheck_dir}
+    mkdir -p ${ascat_dir}
+    mkdir -p ${tmp_dir}
+
+    touch mkdir_done.txt
+    """
+}
+
+
+/*
+ * Trim Illumina Universal Adapters
+ */
+process TRIM_ADAPTERS {
+
+    tag "$sample"
+    cpus 8
+    memory '16GB'
+    time '4h'
+    executor 'slurm'
+    queue 'short'
+
+    input:
+    tuple val(sample), val(fq_prefix), val(sample_order)
+    val fq_dir
+    val make_dirs_ch
+
+    output:
+    tuple val(sample), val(sample_order), path("${sample}_trimmed_R1.fastq.gz"), path("${sample}_trimmed_R2.fastq.gz")
+
+    script:
+    """
+    conda run -n cutadapt cutadapt -a AGATCGGAAGAGCACACGTCTGAACTCCAGTCA -A AGATCGGAAGAGCGTCGTGTAGGGAAAGAGTGT --minimum-length 20 --cores=8 \\
+        -o ${sample}_trimmed_R1.fastq.gz -p ${sample}_trimmed_R2.fastq.gz \\
+        ${fq_dir}/${fq_prefix}_R1_001.fastq.gz ${fq_dir}/${fq_prefix}_R2_001.fastq.gz
+    """
+}
+
+/*
+ * Run BWA-MEM
+ */
+process BWA_MEM {
+
+    tag "$sample"
+    cpus 8
+    memory '16GB'
+    time '8h'
+    executor 'slurm'
+    queue 'short'
+
+    input:
+    tuple val(sample), val(sample_order), path(trimmed_fq1), path(trimmed_fq2)
+    tuple path(ref_fasta), path(ref_amb), path(ref_ann), path(ref_bwt), path(ref_fai), path(ref_pac), path(ref_sa), path(ref_dict)
+
+    output:
+    tuple val(sample), path("${sample}_raw.sam")
+
+    script:
+    """
+    module load gcc/14.2.0 bwa/0.7.18
+
+    bwa mem -M -t 8 -R '@RG\\tID:${sample_order}\\tSM:${sample}\\tPL:Illumina' ${ref_fasta} ${trimmed_fq1} ${trimmed_fq2} > ${sample}_raw.sam
+
+    """
+}
+
+
+/*
+ * Run picard SortSam
+ */
+process PICARD_SORTSAM {
+
+    tag "$sample"
+    cpus 8
+    memory '72GB'
+    time '3h'
+    executor 'slurm'
+    queue 'short'
+
+    input:
+    tuple val(sample), path(raw_sam)
+    path bam_dir
+    path tmp_dir
+    tuple path(ref_fasta), path(ref_amb), path(ref_ann), path(ref_bwt), path(ref_fai), path(ref_pac), path(ref_sa), path(ref_dict)
+
+    output:
+    tuple val(sample), path("${sample}_sorted.bam"), path("${sample}_sorted.bai")
+
+    script:
+    """
+    mkdir -p ${bam_dir}
+    java -Xmx60g -jar /home/alg2264/install/picard.jar SortSam --INPUT ${raw_sam} --OUTPUT ${sample}_sorted.bam --SORT_ORDER coordinate --CREATE_INDEX true --TMP_DIR ${tmp_dir} -R ${ref_fasta}  
+    """
+}
+
+
+
+/*
+ * Run GATK MarkDuplicates
+ */
+process PICARD_MARKDUP {
+
+    tag "$sample"
+    cpus 8
+    memory '72GB'
+    time '12h'
+    executor 'slurm'
+    queue 'short'
+
+    input:
+    tuple val(sample), path(sorted_bam), path(sorted_bai)
+    path bam_dir
+    path tmp_dir
+    tuple path(ref_fasta), path(ref_amb), path(ref_ann), path(ref_bwt), path(ref_fai), path(ref_pac), path(ref_sa), path(ref_dict)
+
+    output:
+    tuple val(sample), path("${sample}_marked_dup.bam"), path("${sample}_marked_dup.bai")
+
+    script:
+    """
+
+    mkdir -p ${bam_dir}
+    java -Xmx60g -jar /home/alg2264/install/picard.jar MarkDuplicates --INPUT ${sorted_bam} --OUTPUT ${sample}_marked_dup.bam --ASSUME_SORT_ORDER coordinate --CREATE_INDEX true --TMP_DIR ${tmp_dir} -R ${ref_fasta} --METRICS_FILE ${bam_dir}/${sample}_marked_dup_metrics.txt
+
+ 
+    """
+}
+
+/*
+ * Run GATK BaseRecalibrator
+ */
+process GATK_BASERECAL {
+
+    tag "$sample"
+    cpus 16
+    memory '24GB'
+    time '12h'
+    executor 'slurm'
+    queue 'short'
+
+    input:
+    tuple val(sample), path(markdup_bam), path(markdup_bam_index)
+    tuple path(polymorphic_sites), path(polymorphic_sites_tbi)    
+    path tmp_dir
+    tuple path(ref_fasta), path(ref_amb), path(ref_ann), path(ref_bwt), path(ref_fai), path(ref_pac), path(ref_sa), path(ref_dict)
+
+    output:
+    tuple val(sample), path(markdup_bam), path(markdup_bam_index), path("${sample}_recal_data.table")
+
+    script:
+    """
+    module load gatk/4.6.1.0
+
+    gatk BaseRecalibrator -I ${markdup_bam} -R ${ref_fasta} --known-sites ${polymorphic_sites} -O ${sample}_recal_data.table --tmp-dir ${tmp_dir}
+    """
+}
+
+/*
+ * Run GATK ApplyBQSR
+ */
+process GATK_APPLYBQSR {
+
+    tag "$sample"
+    cpus 16
+    memory '32GB'
+    time '3h'
+    executor 'slurm'
+    queue 'short'
+
+    publishDir params.bam_dir, mode: 'copy'
+
+    input:
+    tuple val(sample), path(markdup_bam), path(markdup_bam_index), path(recal_data_table)
+    path bam_dir
+    path tmp_dir
+    tuple path(ref_fasta), path(ref_amb), path(ref_ann), path(ref_bwt), path(ref_fai), path(ref_pac), path(ref_sa), path(ref_dict)
+
+    output:
+    tuple val(sample), path("${sample}.bam"), path("${sample}.bai")
+
+    script:
+    """
+    module load gatk/4.6.1.0
+    gatk ApplyBQSR -R ${ref_fasta} -I ${markdup_bam} --bqsr-recal-file ${recal_data_table} -O ${sample}.bam --tmp-dir ${tmp_dir}
+
+    """
+}
+
+
+
+/*
+ * Slice bam for chrM/MT for haplocheck
+ */
+process SLICE_MTDNA {
+
+    tag "$sample"
+    cpus 1
+    memory '4GB'
+    time '5m'
+    executor 'slurm'
+    queue 'short'
+
+    publishDir params.mtbam_dir, mode: 'copy'
+
+    input:
+    tuple val(sample), path(sample_bam), path(sample_bai)
+    val mt_label
+
+    output:
+    tuple val(sample), path("${sample}_mt.bam"), path("${sample}_mt.bam.bai")
+
+    script:
+    """
+    module load gcc/14.2.0 samtools/1.21
+    samtools view -hb ${sample}.bam -F 3840 -q 20 ${mt_label} > ${sample}_mt.bam
+    samtools index ${sample}_mt.bam
+    """
+}
+
+
+/*
+ * Run haplocheck
+ */
+process HAPLOCHECK {
+
+    tag "$patient"
+    cpus 2
+    memory '8GB'
+    time '2h'
+    executor 'slurm'
+    queue 'short'
+
+    input:
+    val patient
+    path all_mtbams
+    path all_mtbam_indices
+    path haplocheck_dir
+
+    output:
+    path "${haplocheck_dir}/${patient}"
+
+    script:
+    """
+    ## run haplocheck on all bams in the bams/ directory
+    cloudgene run haplocheck@1.3.2 --files $PWD --format bam --output ${haplocheck_dir}/${patient} --threads 2
+    """
+}
+
+
+/*
+ * Run GLIMPSE2 on the normal sample
+ */
+process GLIMPSE2_PHASE {
+
+    tag "chr${chr}"
+    cpus 20
+    memory '20GB'
+    time '8h'
+    executor 'slurm'
+    queue 'short'
+
+    publishDir params.glimpse_dir, mode: 'copy'
+
+    input:
+    val chr
+    tuple val(normal_sample), path(normal_bam), path(normal_index)
+    val patient
+    val build
+    path glimpse_refsplit_dir
+    path glimpse_chunk_dir
+
+    output:
+    path "chunks"
+
+    script:
+    """
+    mkdir -p chunks
+    REF="${glimpse_refsplit_dir}/1000GP.chr${chr}"
+    CHUNKS="${glimpse_chunk_dir}/chunks.chr${chr}.txt"
+
+    while IFS="" read -r LINE || [ -n "\$LINE" ];
+    do
+        #printf -v ID "%02d" \$(echo "\$LINE" | cut -d" " -f1)
+        IRG=\$(echo "\$LINE" | cut -d" " -f3)
+        ORG=\$(echo "\$LINE" | cut -d" " -f4)
+        CHR=\$(echo "\$LINE" | cut -d" " -f2)
+        REGS=\$(echo "\$IRG" | cut -d":" -f2 | cut -d"-" -f1)
+        REGE=\$(echo "\$IRG" | cut -d":" -f2 | cut -d"-" -f2)
+
+        GLIMPSE2_phase_static --bam-file "\${normal_bam}" --reference "\${REF}_\${CHR}_\${REGS}_\${REGE}.bin" --output "chunks/\${patient}_\${CHR}_\${REGS}_\${REGE}.bcf" --threads 20
+    done < "\${CHUNKS}"
+    """
+}
+
+
+
+
+/*
+ * Slice bam for chrM/MT for haplocheck
+ */
+process PREP_CNA_DATA {
+
+    tag "$tumor_sample"
+    cpus 2
+    memory '16GB'
+    time '2h'
+    executor 'slurm'
+    queue 'short'
+
+    publishDir params.ascat_dir, mode: 'copy'
+
+    input:
+    tuple val(tumor_sample), path(tumor_bam), path(tumor_index), val(normal_sample), path(normal_bam), path(normal_index)
+    val patient
+    val sex
+    val build
+    path bed_file
+    path allelecounter_exe
+    val alleles_prefix
+    val loci_prefix
+
+    output:
+    tuple(
+        path("${patient}_${tumor_sample}_${normal_sample}_Germline_BAF_rawBAF.txt"), 
+        path("${patient}_${tumor_sample}_${normal_sample}_Germline_BAF.txt"), 
+        path("${patient}_${tumor_sample}_${normal_sample}_Germline_LogR.txt"), 
+        path("${patient}_${tumor_sample}_${normal_sample}_Tumor_BAF_rawBAF.txt"), 
+        path("${patient}_${tumor_sample}_${normal_sample}_Tumor_BAF.txt"), 
+        path("${patient}_${tumor_sample}_${normal_sample}_Tumor_LogR.txt")
+    )
+
+    script:
+    """
+
+    conda run -n CNAlignR Rscript /home/alg2264/repos/CNAlignR/scripts/wes_preprocess.R \
+        --patient ${patient} \
+        --tumor_name ${tumor_sample} \
+        --tumor_bam ${tumor_bam} \
+        --normal_name ${normal_sample} \
+        --normal_bam ${normal_bam} \
+        --sex ${sex} \
+        --genome ${build} \
+        --target_bed ${bed_file} \
+        --allelecounter_exe ${allelecounter_exe} \
+        --alleles_prefix ${alleles_prefix} \
+        --loci_prefix ${loci_prefix} \
+    """
+}
+
+
+/*
+ * Get data object for CNalign (copied from WES, update this for bin-level)
+ */
+process GET_CNALIGN_OBJ {
+
+    tag "$patient"
+    cpus 8
+    memory '60GB'
+    time '4h'
+    executor 'slurm'
+    queue 'short'
+
+    publishDir params.ascat_dir, mode: 'copy'
+    
+    input:
+    path all_allelecounter_files
+    val normal_sample
+    val patient
+    val sex
+    val build
+    path GCcontentfile
+    path replictimingfile
+    
+    output:
+    path "${patient}_CNalign_obj.rds"
+    path "${patient}_CNalign_obj_mpcf.rds"
+    path "${patient}_CNalign_obj_mpcf_hisens.rds"
+
+
+
+    script:
+    """
+    echo "Generating CNalign data object ..."
+    conda run -n CNAlignR /home/alg2264/miniconda3/envs/CNAlignR/bin/Rscript /home/alg2264/repos/CNAlignR/scripts/wes_getinput.R \
+        --patient ${patient} \
+        --normal_sample ${normal_sample} \
+        --sex ${sex} \
+        --build ${build} \
+        --GCcontentfile ${GCcontentfile} \
+        --replictimingfile ${replictimingfile} \
+        --obj_file "${patient}_CNalign_obj.rds"
+    """
+}
+
+
+/*
+ * Workflow
+ */
+workflow {
+
+    // reference genome inputs
+    ref_fasta = file(params.ref_fasta)
+    ref_amb = file(params.ref_amb)
+    ref_ann = file(params.ref_ann)
+    ref_bwt = file(params.ref_bwt)
+    ref_fai = file(params.ref_fai)
+    ref_pac = file(params.ref_pac)
+    ref_sa = file(params.ref_sa)
+    ref_dict = file(params.ref_dict)
+    ref_files = tuple(ref_fasta, ref_amb, ref_ann, ref_bwt, ref_fai, ref_pac, ref_sa, ref_dict)
+
+    // polymorphic sites
+    polymorphic_sites = file(params.polymorphic_sites)
+    polymorphic_sites_tbi = file(params.polymorphic_sites_tbi)
+    polymorphic_sites_files = tuple(polymorphic_sites, polymorphic_sites_tbi)    
+
+    // germline resources
+    germline_resource = file(params.germline_resource)
+    germline_resource_tbi = file(params.germline_resource_tbi)
+    germline_resource_files = tuple(germline_resource, germline_resource_tbi)
+
+    // panel of normals
+    panel_of_normals = file(params.panel_of_normals)
+    panel_of_normals_idx = file(params.panel_of_normals_idx)
+    panel_of_normals_files = tuple(panel_of_normals, panel_of_normals_idx)
+
+    // channel of genomic chunks
+    genome_chunk_ch = Channel.fromPath(params.genome_chunks)
+                    .splitCsv(header: false, sep: ",", strip: true)
+                    .map { row -> tuple(row[0], row[1], row[2], row[3]) }
+
+
+    // =============================
+    // bam preprocessing
+    // =============================
+
+    // run process to make all the expected directories for this patient
+    make_dirs_ch = MAKE_DIRS(params.bam_dir, params.mosdepth_dir, params.mtbam_dir, params.haplocheck_dir, params.ascat_dir, params.tmp_dir)
+
+    // Adapter trimming
+    trim_adapt_output = TRIM_ADAPTERS(sample_ch, params.fq_dir, make_dirs_ch)
+
+    // BWA-MEM alignment
+    bwa_mem_output = BWA_MEM(trim_adapt_output, ref_files)
+
+    // Run SortSam on valid samples
+    sortsam_output = PICARD_SORTSAM(bwa_mem_output, params.bam_dir, params.tmp_dir, ref_files)
+
+    // Run MarkDuplicates on sorted bam files
+    markdup_output = PICARD_MARKDUP(sortsam_output, params.bam_dir, params.tmp_dir, ref_files)
+
+    // BaseRecalibrator
+    baserecal_output = GATK_BASERECAL(markdup_output, polymorphic_sites_files, params.tmp_dir, ref_files)
+
+    // ApplyBQSR
+    applybqsr_output = GATK_APPLYBQSR(baserecal_output, params.bam_dir, params.tmp_dir, ref_files)
+
+    // Extracting each element into separate channels
+    preprocessed_sample_ch = applybqsr_output.map { it[0] }
+    preprocessed_bam_ch = applybqsr_output.map { it[1] }
+    preprocessed_bam_index_ch = applybqsr_output.map { it[2] }
+
+    // Collect bams/indices
+    all_bams_ch = preprocessed_bam_ch.collect()
+    all_bam_indices_ch = preprocessed_bam_index_ch.collect()
+
+
+    // =============================
+    // run GLIMPSE2 on the normal bam 
+    // =============================
+
+    //chromosomes = Channel.of( (1..22).collect { it.toString() } + 'X' )
+    chr_ch = Channel.fromList( (1..22).collect { it.toString() } + 'X' )
+    normal_input_ch = applybqsr_output.filter { sample, bam, bai -> sample == params.normal_sample }   
+    glimpse_bcf_dir = GLIMPSE2_PHASE(chr_ch, normal_input_ch, params.patient, params.build, params.glimpse_refsplit_dir, params.glimpse_chunk_dir)
+
+
+}
+
+
+
