@@ -48,7 +48,6 @@ params.mtbam_dir = "${params.output_dir}/${params.patient}/mtbams"
 params.haplocheck_dir = "${params.output_dir}/${params.patient}/haplocheck"
 params.ascat_dir = "${params.output_dir}/${params.patient}/ascat"
 params.glimpse_dir = "${params.output_dir}/${params.patient}/glimpse"
-params.tmp_dir = "${params.nextflow_dir}/${params.patient}/tmp_files"
 
 /*
  * Additional pipeline parameters (use for all WES data)
@@ -74,12 +73,10 @@ params.germline_resource_tbi = "/n/data1/hms/genetics/naxerova/lab/alex/referenc
 params.panel_of_normals = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/PoN/1000g_pon.hg38.vcf"
 params.panel_of_normals_idx = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/PoN/1000g_pon.hg38.vcf.idx"
 params.targets_bed = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/xgen-exome-hyb-panel/xgen-exome-hyb-panel-v2-targets-hg38.bed"
-params.genome_chunks = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/xgen-exome-hyb-panel/xgen-exome-hyb-panel-v2-targets-hg38_50Mbchunks.csv"
 
 // references for GLIMPSE2
-params.glimpse_chunks = "/home/alg2264/repos/NGS-scripts/nextflow/glimpse_chunks_GRCh38.txt"
 params.glimpse_refsplit_dir = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/GLIMPSE_GRCh38/reference_panel/split"
-//params.glimpse_chunk_dir = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/GLIMPSE_GRCh38/chunks"
+params.glimpse_chunks_dir = "/home/alg2264/repos/NGS-scripts/nextflow"
 
 // ascat/CNAlign params
 params.allelecounter_exe = "/home/alg2264/miniconda3/envs/CNalign/bin/alleleCounter"
@@ -94,18 +91,6 @@ println "params.bam_dir: ${params.bam_dir}"
 
 
 
-// creating a channel for GLIMPSE2 regions; one element per chromosome
-glimpse_regions_per_chrom_ch = Channel.fromPath(params.glimpse_chunks)
-    .splitCsv(sep:'\t', header: false)
-    .map { row ->
-        def chr   = row[0].toString()
-        def start = row[1].toString()
-        def end   = row[2].toString()
-        tuple(chr, "${start}\t${end}") }
-    .groupTuple(by: 0) 
-    .map { chr, lines -> tuple(chr, lines.join('\n')) } 
-
-
 process MAKE_DIRS {
     tag "mkdirs"
     executor 'local'
@@ -117,7 +102,6 @@ process MAKE_DIRS {
     val mtbam_dir
     val haplocheck_dir
     val ascat_dir
-    val tmp_dir
     val glimpse_dir
 
     output:
@@ -130,7 +114,6 @@ process MAKE_DIRS {
     mkdir -p ${mtbam_dir}
     mkdir -p ${haplocheck_dir}
     mkdir -p ${ascat_dir}
-    mkdir -p ${tmp_dir}
     mkdir -p ${glimpse_dir}
 
 
@@ -240,7 +223,6 @@ process SAMTOOLS_SORT {
 
     input:
     tuple val(sample), path(raw_sam)
-    path tmp_dir
     tuple path(ref_fasta), path(ref_amb), path(ref_ann), path(ref_bwt), path(ref_fai), path(ref_pac), path(ref_sa), path(ref_dict)
 
     output:
@@ -249,7 +231,7 @@ process SAMTOOLS_SORT {
     script:
     """
     module load gcc/14.2.0 samtools/1.21
-    samtools sort -@ 8 -m 3G -T "${tmp_dir}" -o ${sample}_sorted.bam ${raw_sam}
+    samtools sort -@ 8 -m 3G -o ${sample}_sorted.bam ${raw_sam}
     samtools index -@ 8 ${sample}_sorted.bam
     """
 }
@@ -272,7 +254,6 @@ process GATK_MARKDUP {
 
     input:
     tuple val(sample), path(sorted_bam), path(sorted_bai)
-    path tmp_dir
     tuple path(ref_fasta), path(ref_amb), path(ref_ann), path(ref_bwt), path(ref_fai), path(ref_pac), path(ref_sa), path(ref_dict)
 
     output:
@@ -286,8 +267,6 @@ process GATK_MARKDUP {
         -M ${sample}_marked_dup_metrics.txt \
         -R ${ref_fasta} \
         --create-output-bam-index true \
-        --tmp-dir "${tmp_dir}" \
-        --conf "spark.local.dir=${tmp_dir}" \
         --spark-master "local[8]"
     """
 }
@@ -311,7 +290,6 @@ process GATK_BASERECAL {
     input:
     tuple val(sample), path(markdup_bam), path(markdup_bam_index), path(markdup_metrics)
     tuple path(polymorphic_sites), path(polymorphic_sites_tbi)    
-    path tmp_dir
     tuple path(ref_fasta), path(ref_amb), path(ref_ann), path(ref_bwt), path(ref_fai), path(ref_pac), path(ref_sa), path(ref_dict)
 
     output:
@@ -319,7 +297,7 @@ process GATK_BASERECAL {
 
     script:
     """
-    conda run -n gatk_4.6.1.0 gatk BaseRecalibrator -I ${markdup_bam} -R ${ref_fasta} --known-sites ${polymorphic_sites} -O ${sample}_recal_data.table --tmp-dir ${tmp_dir}
+    conda run -n gatk_4.6.1.0 gatk BaseRecalibrator -I ${markdup_bam} -R ${ref_fasta} --known-sites ${polymorphic_sites} -O ${sample}_recal_data.table
     """
 }
 
@@ -339,7 +317,6 @@ process GATK_APPLYBQSR {
 
     input:
     tuple val(sample), path(markdup_bam), path(markdup_bam_index), path(recal_data_table)
-    path tmp_dir
     tuple path(ref_fasta), path(ref_amb), path(ref_ann), path(ref_bwt), path(ref_fai), path(ref_pac), path(ref_sa), path(ref_dict)
 
     output:
@@ -347,7 +324,7 @@ process GATK_APPLYBQSR {
 
     script:
     """
-    conda run -n gatk_4.6.1.0 gatk ApplyBQSR -R ${ref_fasta} -I ${markdup_bam} --bqsr-recal-file ${recal_data_table} -O ${sample}.bam --tmp-dir ${tmp_dir}
+    conda run -n gatk_4.6.1.0 gatk ApplyBQSR -R ${ref_fasta} -I ${markdup_bam} --bqsr-recal-file ${recal_data_table} -O ${sample}.bam
 
     """
 }
@@ -413,9 +390,6 @@ process HAPLOCHECK {
 }
 
 
-/*
- * Run GLIMPSE2 on the normal sample
- */
 process GLIMPSE2_PHASE {
 
     tag "${chr}"
@@ -428,31 +402,33 @@ process GLIMPSE2_PHASE {
     publishDir params.glimpse_dir, mode: 'copy'
 
     input:
-    tuple val(chr), val(regions_txt)
-    tuple val(normal_sample), path(normal_bam), path(normal_index)
-    val patient
-    path glimpse_refsplit_dir
+    //val chr
+    //val normal_sample
+    //path normal_bam
+    //path normal_index
+    tuple val(chr), val(normal_sample), path(normal_bam), path(normal_index)
 
     output:
-    path "${chr}_chunks"  // directory with all .bcf for this chromosome
+    path "chr${chr}_chunks"  // directory with all .bcf for this chromosome
 
     script:
-    // derive sample prefix from BAM filename; write one output per region
     """
     set -euo pipefail
 
-    REF="${glimpse_refsplit_dir}/1000GP.${chr}"
-    mkdir -p ${chr}_chunks
+    REF="${params.glimpse_refsplit_dir}/1000GP.chr${chr}"
+    REGIONS_TXT="${params.glimpse_chunks_dir}/glimpse_chunks_per_chr/chr${chr}_regions.tsv"    
+    PATIENT="${params.patient}"
+    mkdir -p chr${chr}_chunks
 
     # Loop over the regions text passed from Nextflow
-    while IFS=\$'\\t' read -r START END CHRINT; do
+    while IFS=\$'\\t' read -r CHR START END CHRINT; do
         [ -z "\$START" ] && continue
         GLIMPSE2_phase_static \\
           --bam-file "${normal_bam}" \\
-          --reference "\${REF}_${chr}_\${START}_\${END}.bin" \\
-          --output "${chr}_chunks/${patient}_${normal_sample}_imputed_${chr}_\${START}_\${END}.bcf" \\
+          --reference "\${REF}_chr${chr}_\${START}_\${END}.bin" \\
+          --output "chr${chr}_chunks/\${PATIENT}_${normal_sample}_imputed_${chr}_\${START}_\${END}.bcf" \\
           --threads 20
-    done <<< "${regions_txt}"
+    done < "\${REGIONS_TXT}"
     """
 }
 
@@ -587,18 +563,13 @@ workflow {
     panel_of_normals_idx = file(params.panel_of_normals_idx)
     panel_of_normals_files = tuple(panel_of_normals, panel_of_normals_idx)
 
-    // channel of genomic chunks
-    genome_chunk_ch = Channel.fromPath(params.genome_chunks)
-                    .splitCsv(header: false, sep: ",", strip: true)
-                    .map { row -> tuple(row[0], row[1], row[2], row[3]) }
-
 
     // =============================
     // bam preprocessing
     // =============================
 
     // run process to make all the expected directories for this patient
-    make_dirs_ch = MAKE_DIRS(params.offtarget_fq_dir, params.bam_dir, params.mosdepth_dir, params.mtbam_dir, params.haplocheck_dir, params.ascat_dir, params.tmp_dir, params.glimpse_dir)
+    make_dirs_ch = MAKE_DIRS(params.offtarget_fq_dir, params.bam_dir, params.mosdepth_dir, params.mtbam_dir, params.haplocheck_dir, params.ascat_dir, params.glimpse_dir)
 
     // convert offtarget bam file to a paired of FASTQ files
     bam_to_fq_ch = CONVERT_BAM_TO_FQ_PAIR(sample_ch, make_dirs_ch)
@@ -610,16 +581,16 @@ workflow {
     bwa_mem_output = BWA_MEM(trim_adapt_output, ref_files)
 
     // Run SortSam on valid samples
-    sortsam_output = SAMTOOLS_SORT(bwa_mem_output, params.tmp_dir, ref_files)
+    sortsam_output = SAMTOOLS_SORT(bwa_mem_output, ref_files)
 
     // Run MarkDuplicates on sorted bam files
-    markdup_output = GATK_MARKDUP(sortsam_output, params.tmp_dir, ref_files)
+    markdup_output = GATK_MARKDUP(sortsam_output, ref_files)
 
     // BaseRecalibrator
-    baserecal_output = GATK_BASERECAL(markdup_output, polymorphic_sites_files, params.tmp_dir, ref_files)
+    baserecal_output = GATK_BASERECAL(markdup_output, polymorphic_sites_files, ref_files)
 
     // ApplyBQSR
-    applybqsr_output = GATK_APPLYBQSR(baserecal_output, params.tmp_dir, ref_files)
+    applybqsr_output = GATK_APPLYBQSR(baserecal_output, ref_files)
 
     // Extracting each element into separate channels
     preprocessed_sample_ch = applybqsr_output.map { it[0] }
@@ -635,12 +606,19 @@ workflow {
     // run GLIMPSE2 on the normal bam 
     // =============================
 
-    //chromosomes = Channel.of( (1..22).collect { it.toString() } + 'X' )
-    //chr_ch = Channel.fromList( (1..22).collect { it.toString() } + 'X' )
+    // 1) normal sample channel
+    normal_input_ch = applybqsr_output.filter { sample, bam, bai -> sample == params.normal_sample }
+    normal_sample_ch = normal_input_ch.map { it[0] }
+    normal_bam_ch = normal_input_ch.map { it[1] }
+    normal_bai_ch = normal_input_ch.map { it[2] }
+ 
+    // 2) Chromosome channel
+    chrom_ch = Channel.fromList( (1..22).collect { it.toString() } + 'X' )
     
-    normal_input_ch = applybqsr_output.filter { sample, bam, bai -> sample == params.normal_sample }   
-    glimpse_bcf_dir = GLIMPSE2_PHASE(glimpse_regions_per_chrom_ch, normal_input_ch, params.patient, params.glimpse_refsplit_dir)
-
+    normal_chr_ch = chrom_ch.combine(normal_input_ch)
+    
+    // run glimpse phase for each chromosome and collect the directories for their BCF files
+    glimpse_phase_output = GLIMPSE2_PHASE(normal_chr_ch)
 
 }
 
