@@ -158,7 +158,7 @@ process BWA_MEM {
 
     tag "$sample"
     cpus 8
-    memory '16GB'
+    memory '32GB'
     time '8h'
     executor 'slurm'
     queue 'short'
@@ -181,9 +181,9 @@ process BWA_MEM {
 
 
 /*
- * Run picard SortSam
+ * Run samtools sort
  */
-process PICARD_SORTSAM {
+process SAMTOOLS_SORT {
 
     tag "$sample"
     cpus 8
@@ -196,28 +196,28 @@ process PICARD_SORTSAM {
 
     input:
     tuple val(sample), path(raw_sam)
-    path tmp_dir
     tuple path(ref_fasta), path(ref_amb), path(ref_ann), path(ref_bwt), path(ref_fai), path(ref_pac), path(ref_sa), path(ref_dict)
 
     output:
-    tuple val(sample), path("${sample}_sorted.bam"), path("${sample}_sorted.bai")
+    tuple val(sample), path("${sample}_sorted.bam"), path("${sample}_sorted.bam.bai")
 
     script:
     """
-    java -Xmx60g -jar /home/alg2264/install/picard.jar SortSam --INPUT ${raw_sam} --OUTPUT ${sample}_sorted.bam --SORT_ORDER coordinate --CREATE_INDEX true --TMP_DIR ${tmp_dir} -R ${ref_fasta}  
+    module load gcc/14.2.0 samtools/1.21
+    samtools sort -@ 8 -m 3G -o ${sample}_sorted.bam ${raw_sam}
+    samtools index -@ 8 ${sample}_sorted.bam
     """
 }
-
 
 
 /*
  * Run GATK MarkDuplicates
  */
-process PICARD_MARKDUP {
+process GATK_MARKDUP {
 
     tag "$sample"
     cpus 8
-    memory '72GB'
+    memory '64GB'
     time '12h'
     executor 'slurm'
     queue 'short'
@@ -226,17 +226,23 @@ process PICARD_MARKDUP {
 
     input:
     tuple val(sample), path(sorted_bam), path(sorted_bai)
-    path tmp_dir
     tuple path(ref_fasta), path(ref_amb), path(ref_ann), path(ref_bwt), path(ref_fai), path(ref_pac), path(ref_sa), path(ref_dict)
 
     output:
-    tuple val(sample), path("${sample}_marked_dup.bam"), path("${sample}_marked_dup.bai")
+    tuple val(sample), path("${sample}_marked_dup.bam"), path("${sample}_marked_dup.bam.bai"), path("${sample}_marked_dup_metrics.txt")
 
     script:
     """
-    java -Xmx60g -jar /home/alg2264/install/picard.jar MarkDuplicates --INPUT ${sorted_bam} --OUTPUT ${sample}_marked_dup.bam --ASSUME_SORT_ORDER coordinate --CREATE_INDEX true --TMP_DIR ${tmp_dir} -R ${ref_fasta} --METRICS_FILE ${sample}_marked_dup_metrics.txt
+    conda run -n gatk_4.6.1.0 gatk --java-options "-Xmx56g" MarkDuplicatesSpark \
+        -I ${sorted_bam} \
+        -O ${sample}_marked_dup.bam \
+        -M ${sample}_marked_dup_metrics.txt \
+        -R ${ref_fasta} \
+        --create-output-bam-index true \
+        --spark-master "local[8]"
     """
 }
+
 
 /*
  * Run GATK BaseRecalibrator
@@ -253,9 +259,8 @@ process GATK_BASERECAL {
     publishDir params.bam_dir, mode: 'copy'
 
     input:
-    tuple val(sample), path(markdup_bam), path(markdup_bam_index)
+    tuple val(sample), path(markdup_bam), path(markdup_bam_index), path(markdup_metrics)
     tuple path(polymorphic_sites), path(polymorphic_sites_tbi)    
-    path tmp_dir
     tuple path(ref_fasta), path(ref_amb), path(ref_ann), path(ref_bwt), path(ref_fai), path(ref_pac), path(ref_sa), path(ref_dict)
 
     output:
@@ -263,11 +268,10 @@ process GATK_BASERECAL {
 
     script:
     """
-    module load gatk/4.6.1.0
-
-    gatk BaseRecalibrator -I ${markdup_bam} -R ${ref_fasta} --known-sites ${polymorphic_sites} -O ${sample}_recal_data.table --tmp-dir ${tmp_dir}
+    conda run -n gatk_4.6.1.0 gatk BaseRecalibrator -I ${markdup_bam} -R ${ref_fasta} --known-sites ${polymorphic_sites} -O ${sample}_recal_data.table
     """
 }
+
 
 /*
  * Run GATK ApplyBQSR
@@ -285,7 +289,6 @@ process GATK_APPLYBQSR {
 
     input:
     tuple val(sample), path(markdup_bam), path(markdup_bam_index), path(recal_data_table)
-    path tmp_dir
     tuple path(ref_fasta), path(ref_amb), path(ref_ann), path(ref_bwt), path(ref_fai), path(ref_pac), path(ref_sa), path(ref_dict)
 
     output:
@@ -293,11 +296,11 @@ process GATK_APPLYBQSR {
 
     script:
     """
-    module load gatk/4.6.1.0
-    gatk ApplyBQSR -R ${ref_fasta} -I ${markdup_bam} --bqsr-recal-file ${recal_data_table} -O ${sample}.bam --tmp-dir ${tmp_dir}
+    conda run -n gatk_4.6.1.0 gatk ApplyBQSR -R ${ref_fasta} -I ${markdup_bam} --bqsr-recal-file ${recal_data_table} -O ${sample}.bam
 
     """
 }
+
 
 
 /*
@@ -308,9 +311,9 @@ process GATK_MUTECT2 {
     tag "$region"
     cpus 18
     memory '32GB'
-    time '12h'  // 2h is usually sufficient
+    time '24h'  // 2h is usually sufficient
     executor 'slurm'
-    queue 'short'
+    queue 'medium'
 
     publishDir params.mutect_dir, mode: 'copy'
 
@@ -330,7 +333,6 @@ process GATK_MUTECT2 {
     output:
     tuple val(region), path("regions_${region}.bed"), path("${patient}_${region}.vcf.gz"), path("${patient}_${region}.vcf.gz.tbi"), path("${patient}_${region}.vcf.gz.stats"), path("${patient}_${region}.f1r2.tar.gz")
 
-
     script:
     def bams_line = all_bams.collect { bam -> "-I ${bam}" }.join(' ')
     """
@@ -340,8 +342,7 @@ process GATK_MUTECT2 {
     echo -e "${chr}\t${start}\t${end}" | bedtools intersect -a ${bed_file} -b - > regions_${region}.bed
 
     # run mutect2 for this region
-    module load gatk/4.6.1.0
-    gatk Mutect2 -R $ref_fasta \
+    conda run -n gatk_4.6.1.0 gatk Mutect2 -R $ref_fasta \
         $bams_line \
         -normal $normal_sample \
         -L regions_${region}.bed \
@@ -368,7 +369,6 @@ process MERGE_REGIONS {
 
     input:
     val patient
-    path tmp_dir
     path all_vcf
     path all_vcf_tbi
     path all_stats
@@ -385,7 +385,7 @@ process MERGE_REGIONS {
     def f1r2_line = all_f1r2.collect { f1r2file -> "-I ${f1r2file}" }.join(' ')
 
     """
-    module load bcftools/1.21 gcc/14.2.0 gatk/4.6.1.0
+    module load bcftools/1.21
 
     # combine the VCF file for each genomic chunk into a single VCF
     bcftools concat ${vcf_line} -a > ${patient}_raw_unsorted.vcf
@@ -393,13 +393,13 @@ process MERGE_REGIONS {
     rm ${patient}_raw_unsorted.vcf
 
     # index the combined VCF
-    gatk IndexFeatureFile -I ${patient}_raw.vcf.gz 
+    conda run -n gatk_4.6.1.0 gatk IndexFeatureFile -I ${patient}_raw.vcf.gz 
 
     # combine the mutect-stats file for each chunk
-    gatk MergeMutectStats ${stats_line} --output ${patient}_raw.vcf.gz.stats
+    conda run -n gatk_4.6.1.0 gatk MergeMutectStats ${stats_line} --output ${patient}_raw.vcf.gz.stats
 
     # learn read orientation bias
-    gatk LearnReadOrientationModel ${f1r2_line} --output ${patient}_raw.artifact-prior.tar.gz
+    conda run -n gatk_4.6.1.0 gatk LearnReadOrientationModel ${f1r2_line} --output ${patient}_raw.artifact-prior.tar.gz
 
     """
 }
@@ -422,7 +422,6 @@ process FILTER_MUTECT_CALLS {
 
     input:
     val patient
-    path tmp_dir
     tuple path(raw_vcf), path(raw_vcf_tbi), path(raw_vcf_stats), path(raw_artifact_priors)
     tuple path(ref_fasta), path(ref_amb), path(ref_ann), path(ref_bwt), path(ref_fai), path(ref_pac), path(ref_sa), path(ref_dict)  // ref genome files
 
@@ -431,25 +430,26 @@ process FILTER_MUTECT_CALLS {
 
     script:
     """
-    module load bcftools/1.21 gcc/14.2.0 gatk/4.6.1.0
+
+    module load bcftools/1.21
 
     # FilterMutectCalls
-    gatk FilterMutectCalls -R $ref_fasta -V $raw_vcf --orientation-bias-artifact-priors $raw_artifact_priors -O ${patient}_unfiltered.vcf.gz
+    conda run -n gatk_4.6.1.0 gatk FilterMutectCalls -R $ref_fasta -V $raw_vcf --orientation-bias-artifact-priors $raw_artifact_priors -O ${patient}_unfiltered.vcf.gz
 
     # IndexFeatureFile
-    gatk IndexFeatureFile -I ${patient}_unfiltered.vcf.gz --tmp-dir $tmp_dir
+    conda run -n gatk_4.6.1.0 gatk IndexFeatureFile -I ${patient}_unfiltered.vcf.gz 
 
     # normalize VCF to split multi-allelic sites
     bcftools norm --multiallelics -both --fasta-ref $ref_fasta ${patient}_unfiltered.vcf.gz | bcftools view -I -O z -o ${patient}_unfiltered_norm.vcf.gz -
 
     # indexing normalized VCF
-    gatk IndexFeatureFile -I ${patient}_unfiltered_norm.vcf.gz --tmp-dir $tmp_dir
+    conda run -n gatk_4.6.1.0 gatk IndexFeatureFile -I ${patient}_unfiltered_norm.vcf.gz 
 
     # filtering mutations
     bcftools view -i "FILTER='PASS'" ${patient}_unfiltered_norm.vcf.gz | bcftools view -I -O z -o ${patient}_filtered.vcf.gz -
 
     # indexing filtered VCF
-    gatk IndexFeatureFile -I ${patient}_filtered.vcf.gz --tmp-dir $tmp_dir
+    conda run -n gatk_4.6.1.0 gatk IndexFeatureFile -I ${patient}_filtered.vcf.gz 
     """
 }
 
@@ -480,9 +480,8 @@ process VCF2MAF {
 
     script:
     """
-    module load bcftools/1.21 gcc/14.2.0 gatk/4.6.1.0 samtools/1.21
-
     ## subset the multi-sample VCF for this sample
+    module load bcftools/1.21
     bcftools view $filtered_vcf -s $sample > ${sample}.vcf
 
     ## run vcfmaf to get a sample-specific maf
@@ -685,6 +684,45 @@ process GET_CNALIGN_OBJ {
 
 
 /*
+ * Run snp-pileup for all samples
+ */
+process SNP_PILEUP { 
+
+    tag "$patient"
+    cpus 1
+    memory '32GB'
+    time '8h'
+    executor 'slurm'
+    queue 'short'
+
+    input:
+    path polymorphic_sites
+    path polymorphic_sites_tbi
+    path all_bams
+    path all_bam_indices
+    val patient
+
+    publishDir params.ascat_dir, mode: 'copy'
+
+    output:
+    path "${patient}.pileup.gz"
+
+    script:
+    def bam_line = all_bams.collect { bam -> "${bam}" }.join(' ')
+    def n_bams   = all_bams.size()
+    def r_arg    = (['25'] * n_bams).join(',')   // e.g. "25,25,25,25,25"
+
+    """
+    # run snp-pileup for all bam files
+    conda run -n snp-pileup snp-pileup ${polymorphic_sites} ${patient}.pileup.gz -q 10 -Q 20 -P 100 -d 4000 -g -r ${r_arg} ${bam_line}
+    """ 
+}
+
+
+
+
+
+/*
  * Workflow
  */
 workflow {
@@ -735,16 +773,16 @@ workflow {
     bwa_mem_output = BWA_MEM(trim_adapt_output, ref_files)
 
     // Run SortSam on valid samples
-    sortsam_output = PICARD_SORTSAM(bwa_mem_output, params.tmp_dir, ref_files)
+    sortsam_output = SAMTOOLS_SORT(bwa_mem_output, ref_files)
 
     // Run MarkDuplicates on sorted bam files
-    markdup_output = PICARD_MARKDUP(sortsam_output, params.tmp_dir, ref_files)
+    markdup_output = GATK_MARKDUP(sortsam_output, ref_files)
 
     // BaseRecalibrator
-    baserecal_output = GATK_BASERECAL(markdup_output, polymorphic_sites_files, params.tmp_dir, ref_files)
+    baserecal_output = GATK_BASERECAL(markdup_output, polymorphic_sites_files, ref_files)
 
     // ApplyBQSR
-    applybqsr_output = GATK_APPLYBQSR(baserecal_output, params.tmp_dir, ref_files)
+    applybqsr_output = GATK_APPLYBQSR(baserecal_output, ref_files)
 
     // Extracting each element into separate channels
     preprocessed_sample_ch = applybqsr_output.map { it[0] }
@@ -777,10 +815,10 @@ workflow {
     all_f1r2_ch = region_f1r2_ch.collect()
 
     // merge results from mutect for each genomic chunk into a single file
-    mergeregions_output = MERGE_REGIONS(params.patient, params.tmp_dir, all_vcf_ch, all_vcf_tbi_ch, all_stats_ch, all_f1r2_ch)
+    mergeregions_output = MERGE_REGIONS(params.patient, all_vcf_ch, all_vcf_tbi_ch, all_stats_ch, all_f1r2_ch)
 
     // filter mutect calls
-    filter_calls_output = FILTER_MUTECT_CALLS(params.patient, params.tmp_dir, mergeregions_output, ref_files)
+    filter_calls_output = FILTER_MUTECT_CALLS(params.patient, mergeregions_output, ref_files)
     filtered_vcf_ch = filter_calls_output.map { it[2] }
     filtered_vcf_tbi_ch = filter_calls_output.map { it[3] }
 
@@ -811,6 +849,10 @@ workflow {
     prep_data_output = PREP_CNA_DATA(prep_input_ch, params.patient, params.sex, params.build, params.targets_bed, params.allelecounter_exe, params.alleles_prefix, params.loci_prefix)
     all_allelecounter_files_ch = prep_data_output.collect()
     cnalign_output = GET_CNALIGN_OBJ(all_allelecounter_files_ch, params.normal_sample, params.patient, params.sex, params.build, params.gccontentfile, params.replictimingfile)
+
+    // run SNP-pileup
+    snp_pileup_output = SNP_PILEUP(params.polymorphic_sites, params.polymorphic_sites_tbi, all_bams_ch, all_bam_indices_ch, params.patient)
+
 }
 
 
