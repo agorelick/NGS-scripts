@@ -131,30 +131,31 @@ process MAKE_DIRS {
 }
 
 
-/*
- * clean bad reads from the input MT bam file
- */
-process FILTER_BAM {
-    tag "$sample"
-    cpus 1
-    memory '4GB'
-    time '10m'
-    executor 'slurm'
-    queue 'short'
-
-    input:
-    tuple val(sample), val(input_mbam), val(input_mbam_index), val(sample_order)
-    val make_dirs_ch
-
-    output:
-    tuple val(sample), path("${sample}_mt.filtered.bam"), path("${sample}_mt.filtered.bam.bai"), val(sample_order)
-
-    script:
-    """
-    samtools view -b -f 1 -F 3328 -o ${sample}_mt.filtered.bam $input_mbam
-    samtools index ${sample}_mt.filtered.bam
-    """
-}
+// /*
+//  * clean bad reads from the input MT bam file
+//  */
+// process FILTER_BAM {
+//     tag "$sample"
+//     cpus 1
+//     memory '4GB'
+//     time '10m'
+//     executor 'slurm'
+//     queue 'short'
+// 
+//     input:
+//     tuple val(sample), val(input_mbam), val(input_mbam_index), val(sample_order)
+//     val make_dirs_ch
+// 
+//     output:
+//     tuple val(sample), path("${sample}_mt.filtered.bam"), path("${sample}_mt.filtered.bam.bai"), val(sample_order)
+// 
+//     script:
+//     """
+//     samtools view -b -f 1 -F 3328 -o ${sample}_mt.filtered.bam $input_mbam
+//     samtools index ${sample}_mt.filtered.bam
+//     """
+// }
+// 
 
 
 /*
@@ -174,13 +175,19 @@ process REVERT_SAM {
     val make_dirs_ch
 
     output:
-    tuple val(sample), val(sample_order), path("${sample}_mt_reverted.bam"), path("${sample}_mt_reverted.bam.sbi")
+    tuple val(sample), val(sample_order), path("${sample}_mt_reverted.bam"), path("${sample}_mt_reverted.bam.bai")
 
     script:
     """
-    conda run -n gatk_4.6.1.0 gatk RevertSamSpark \
-        -I ${input_mbam} \
-        -O ${sample}_mt_reverted.bam
+    conda run -n gatk_4.6.1.0 picard RevertSam \\
+        -I ${input_mbam} \\
+        -O ${sample}_mt_reverted.bam \\
+        --TMP_DIR ${params.tmp_dir} \\
+        --SORT_ORDER queryname \\
+        --VALIDATION_STRINGENCY LENIENT
+
+    # index the bam
+    samtools index ${sample}_mt_reverted.bam
     """
 }
 
@@ -287,8 +294,8 @@ process MERGE_BAM_ALIGNMENTS {
     publishDir params.realigned_mbam_dir, mode: 'copy'
 
     input:
-    tuple val(sample), val(sample_order), path(sample_raw_sam)
-    tuple val(sample), val(sample_order), val(reverted_mbam), val(reverted_mbam_sbi)
+    // single joined tuple: [sample, sample_order, raw_sam, reverted_bam, reverted_bam_sbi]
+    tuple val(sample), val(sample_order), path(sample_raw_sam), path(reverted_mbam), path(reverted_mbam_sbi)
     tuple path(ref_fasta), path(ref_amb), path(ref_ann), path(ref_bwt), path(ref_fai), path(ref_pac), path(ref_sa), path(ref_dict)
 
     output:
@@ -322,8 +329,8 @@ process MERGE_BAM_ALIGNMENTS_SHIFTED {
     publishDir params.realigned_mbam_dir, mode: 'copy'
 
     input:
-    tuple val(sample), val(sample_order), path(sample_raw_sam_shifted)
-    tuple val(sample), val(sample_order), val(reverted_mbam), val(reverted_mbam_sbi)
+    // single joined tuple: [sample, sample_order, shifted_raw_sam, reverted_bam, reverted_bam_sbi]
+    tuple val(sample), val(sample_order), path(sample_raw_sam_shifted), path(reverted_mbam), path(reverted_mbam_sbi)
     tuple path(ref_shifted_fasta), path(ref_shifted_amb), path(ref_shifted_ann), path(ref_shifted_bwt), path(ref_shifted_fai), path(ref_shifted_pac), path(ref_shifted_sa), path(ref_shifted_dict)
 
     output:
@@ -548,11 +555,19 @@ workflow {
     // BWA-MEM alignment (shifted)
     bwa_mem_shifted_output = BWA_MEM_SHIFTED(samtofastq_output, ref_shifted_files)
 
+    // merge the bwa-mem output with revert-sam output by the sample name
+    merge_input = bwa_mem_output
+        .join(revert_sam_output, by: [0, 1])
+
+    // merge the bwa-mem output with revert-sam output by the sample name
+    merge_shifted_input = bwa_mem_shifted_output
+        .join(revert_sam_output, by: [0, 1])
+
     // MergeBamAlignment
-    merge_bam_output = MERGE_BAM_ALIGNMENTS(bwa_mem_output, revert_sam_output, ref_files)
+    merge_bam_output = MERGE_BAM_ALIGNMENTS(merge_input, ref_files)
 
     // (shifted) MergeBamAlignment
-    merge_bam_shifted_output = MERGE_BAM_ALIGNMENTS_SHIFTED(bwa_mem_shifted_output, revert_sam_output, ref_shifted_files)
+    merge_bam_shifted_output = MERGE_BAM_ALIGNMENTS_SHIFTED(merge_shifted_input, ref_shifted_files)
 
 
 
@@ -563,12 +578,6 @@ workflow {
 
     // Run MarkDuplicates on sorted bam files
     //markdup_output = GATK_MARKDUP(sortsam_output, ref_files)
-
-    // BaseRecalibrator
-    //baserecal_output = GATK_BASERECAL(markdup_output, polymorphic_sites_files, ref_files)
-
-    // ApplyBQSR
-    //applybqsr_output = GATK_APPLYBQSR(baserecal_output, ref_files)
 
     // Extracting each element into separate channels
     //preprocessed_sample_ch = applybqsr_output.map { it[0] }
