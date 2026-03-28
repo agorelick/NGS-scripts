@@ -68,45 +68,14 @@ params.ref_shifted_pac = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data
 params.ref_shifted_sa = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/mtdna/Homo_sapiens_assembly38.chrM.shifted_by_8000_bases.fasta.sa"
 params.ref_shifted_dict = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/mtdna/Homo_sapiens_assembly38.chrM.shifted_by_8000_bases.dict"
 
-// /*
-//  * Additional pipeline parameters (use for all WES data)
-//  */
-// 
-// // Genome reference files
-// params.build = "hg38"
-// params.mt_label = "chrM"
-// params.ref_fasta = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/assemblies/Homo_sapiens_NCBI_GRCh38/NCBI/GRCh38/Sequence/BWAIndex/genome.fa"
-// params.ref_amb = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/assemblies/Homo_sapiens_NCBI_GRCh38/NCBI/GRCh38/Sequence/BWAIndex/genome.fa.amb"
-// params.ref_ann = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/assemblies/Homo_sapiens_NCBI_GRCh38/NCBI/GRCh38/Sequence/BWAIndex/genome.fa.ann"
-// params.ref_bwt = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/assemblies/Homo_sapiens_NCBI_GRCh38/NCBI/GRCh38/Sequence/BWAIndex/genome.fa.bwt"
-// params.ref_fai = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/assemblies/Homo_sapiens_NCBI_GRCh38/NCBI/GRCh38/Sequence/BWAIndex/genome.fa.fai"
-// params.ref_pac = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/assemblies/Homo_sapiens_NCBI_GRCh38/NCBI/GRCh38/Sequence/BWAIndex/genome.fa.pac"
-// params.ref_sa = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/assemblies/Homo_sapiens_NCBI_GRCh38/NCBI/GRCh38/Sequence/BWAIndex/genome.fa.sa"
-// params.ref_dict = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/assemblies/Homo_sapiens_NCBI_GRCh38/NCBI/GRCh38/Sequence/BWAIndex/genome.dict"
-// 
-// // additional reference files with index files
+// additional reference files with index files
 // params.polymorphic_sites = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/dbSNP/dbSNP_GRCh38/00-common_all_renamedchrs.vcf.gz"
 // params.polymorphic_sites_tbi = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/dbSNP/dbSNP_GRCh38/00-common_all_renamedchrs.vcf.gz.tbi"
 // params.germline_resource = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/gnomad.raw.sites.hg38/af-only-gnomad.hg38.vcf.gz"
 // params.germline_resource_tbi = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/gnomad.raw.sites.hg38/af-only-gnomad.hg38.vcf.gz.tbi"
 // params.panel_of_normals = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/PoN/1000g_pon.hg38.vcf"
 // params.panel_of_normals_idx = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/PoN/1000g_pon.hg38.vcf.idx"
-// params.targets_bed = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/xgen-exome-hyb-panel/xgen-exome-hyb-panel-v2-targets-hg38.bed"
-// params.genome_chunks = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/xgen-exome-hyb-panel/xgen-exome-hyb-panel-v2-targets-hg38_50Mbchunks.csv"
-// 
-// // ascat/CNAlign params
-// params.allelecounter_exe = "/home/alg2264/miniconda3/envs/CNalign/bin/alleleCounter"
-// params.alleles_prefix = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/ascat/G1000_allelesAll_hg38/G1000_alleles_hg38_chr"
-// params.loci_prefix = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/ascat/G1000_lociAll_hg38/G1000_loci_GRCh38_chr"
-// params.gccontentfile = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/ascat/GC_G1000_hg38.txt"
-// params.replictimingfile = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/ascat/RT_G1000_hg38.txt"
  
-
-//println "params.mbam_dir: ${params.mbam_dir}"
-println "params.nextflow_dir: ${params.nextflow_dir}"
-println "params.output_dir: ${params.output_dir}"
-
-
 process MAKE_DIRS {
     tag "mkdirs"
     executor 'local'
@@ -131,95 +100,83 @@ process MAKE_DIRS {
 }
 
 
-// /*
-//  * clean bad reads from the input MT bam file
-//  */
-// process FILTER_BAM {
-//     tag "$sample"
-//     cpus 1
-//     memory '4GB'
-//     time '10m'
-//     executor 'slurm'
-//     queue 'short'
-// 
-//     input:
-//     tuple val(sample), val(input_mbam), val(input_mbam_index), val(sample_order)
-//     val make_dirs_ch
-// 
-//     output:
-//     tuple val(sample), path("${sample}_mt.filtered.bam"), path("${sample}_mt.filtered.bam.bai"), val(sample_order)
-// 
-//     script:
-//     """
-//     samtools view -b -f 1 -F 3328 -o ${sample}_mt.filtered.bam $input_mbam
-//     samtools index ${sample}_mt.filtered.bam
-//     """
-// }
-// 
+process CLEAN_CHRM_BAM_TO_FASTQ {
 
+  tag "$sample"
+  cpus 2
+  memory '8GB'
+  time '1h'
+  executor 'slurm'
+  queue 'short'
 
-/*
- * revert the chrm mapped reads from an aligned bam to an unaligned bam file
- */
-process REVERT_SAM {
+  input:
+  tuple val(sample), path(input_mbam), path(input_mbam_index), val(sample_order)
+  val make_dirs_ch
 
-    tag "$sample"
-    cpus 2
-    memory '8GB'
-    time '30m'
-    executor 'slurm'
-    queue 'short'
+  output:
+  tuple val(sample), val(sample_order), path("${sample}.paired.R1.fastq.gz"), path("${sample}.paired.R2.fastq.gz")
 
-    input:
-    tuple val(sample), val(input_mbam), val(input_mbam_index), val(sample_order)
-    val make_dirs_ch
+  script:
+  """
+  # Name-collate so mates are adjacent
+  samtools collate -@ ${task.cpus} -O ${input_mbam} ${sample}.namecollated | \
+    samtools fastq \
+      -@ ${task.cpus} \
+      -1 ${sample}.paired.R1.fastq.gz \
+      -2 ${sample}.paired.R2.fastq.gz \
+      -s ${sample}.singletons.fastq.gz \
+      -0 /dev/null \
+      -n \
+      -
+  """
+}
 
-    output:
-    tuple val(sample), val(sample_order), path("${sample}_mt_reverted.bam"), path("${sample}_mt_reverted.bam.bai")
+process SAMTOFASTQ {
 
-    script:
-    """
-    conda run -n gatk_4.6.1.0 picard RevertSam \\
-        -I ${input_mbam} \\
-        -O ${sample}_mt_reverted.bam \\
-        --TMP_DIR ${params.tmp_dir} \\
-        --SORT_ORDER queryname \\
-        --VALIDATION_STRINGENCY LENIENT
+  input:
+  tuple val(sample), val(sample_order), path(reverted_mbam)
 
-    # index the bam
-    samtools index ${sample}_mt_reverted.bam
-    """
+  output:
+  tuple val(sample), val(sample_order), path("${sample}_R1.fastq"), path("${sample}_R2.fastq")
+
+  script:
+  """
+  conda run -n gatk_4.6.1.0 picard SamToFastq \
+    -I ${reverted_mbam} \
+    -F ${sample}_R1.fastq \
+    -F2 ${sample}_R2.fastq
+  """
 }
 
 
-/*
- * samtofastq
- */
-process SAMTOFASTQ {
 
-    tag "$sample"
-    cpus 2
-    memory '8GB'
-    time '30m'
-    executor 'slurm'
-    queue 'short'
+process FASTQ_TO_UBAM {
 
-    input:
-    tuple val(sample), val(sample_order), val(reverted_mbam), val(reverted_mbam_sbi)
+  tag "$sample"
+  cpus 2
+  memory '8GB'
+  time '1h'
+  executor 'slurm'
+  queue 'short'
 
-    output:
-    tuple val(sample), val(sample_order), path("${sample}_R1.fastq"), path("${sample}_R2.fastq")
+  input:
+  tuple val(sample), val(sample_order), path(r1_fastq), path(r2_fastq)
 
-    script:
-    """
-    conda run -n gatk_4.6.1.0 picard SamToFastq \\
-        -I ${reverted_mbam} \\
-        -F ${sample}_R1.fastq \\
-        -F2 ${sample}_R2.fastq \\
-        --NON_PF true \\
-        --TMP_DIR ${params.tmp_dir} \\
-        --VALIDATION_STRINGENCY LENIENT
-    """
+  output:
+  tuple val(sample), val(sample_order), path("${sample}_mt_clean.ubam")
+
+  script:
+  """
+  conda run -n gatk_4.6.1.0 picard FastqToSam \
+    FASTQ=${r1_fastq} \
+    FASTQ2=${r2_fastq} \
+    OUTPUT=${sample}_mt_clean.ubam \
+    SAMPLE_NAME=${sample} \
+    READ_GROUP_NAME=${sample} \
+    LIBRARY_NAME=${sample} \
+    PLATFORM=ILLUMINA \
+    TMP_DIR=${params.tmp_dir}
+  """
 }
 
 
@@ -540,14 +497,9 @@ workflow {
     // run process to make all the expected directories for this patient
     make_dirs_ch = MAKE_DIRS(params.realigned_mbam_dir, params.mutect_dir, params.maf_dir, params.tmp_dir)
 
-    // unalign the mbam file
-    //filter_bam_output = FILTER_BAM(sample_ch, make_dirs_ch)
-
-    // unalign the mbam file
-    revert_sam_output = REVERT_SAM(sample_ch, make_dirs_ch)
-
-    // convert unaligned bam to fastqs
-    samtofastq_output = SAMTOFASTQ(revert_sam_output)
+    clean_fastq_output = CLEAN_CHRM_BAM_TO_FASTQ(sample_ch, make_dirs_ch)
+    ubam_output        = FASTQ_TO_UBAM(clean_fastq_output)
+    samtofastq_output  = SAMTOFASTQ(ubam_output)
 
     // BWA-MEM alignment
     bwa_mem_output = BWA_MEM(samtofastq_output, ref_files)
@@ -619,34 +571,6 @@ workflow {
 
     // VCF2MAF
     //vcf2maf_output = VCF2MAF(sample_ch, filtered_vcf_ch, filtered_vcf_tbi_ch)
-
-    // mosdepth (QC)
-    //mosdepth_output = MOSDEPTH(applybqsr_output, params.targets_bed)
-
-    // slice mtDNA
-    //slice_mtdna_output = SLICE_MTDNA(applybqsr_output, params.mt_label)
-
-    // Extracting each element into separate channels
-    //mtsample_ch = slice_mtdna_output.map { it[0] }
-    //mbam_ch = slice_mtdna_output.map { it[1] }
-    //mbam_index_ch = slice_mtdna_output.map { it[2] }
-    //all_mbam_ch = mbam_ch.collect()
-    //all_mbam_index_ch = mbam_index_ch.collect()
-
-    // 1: Separate tumor and normal
-    //tumor_input_ch = applybqsr_output.filter { sample, bam, bai -> sample != params.normal_sample }
-    //normal_input_ch = applybqsr_output.filter { sample, bam, bai -> sample == params.normal_sample }
-
-    // 2. Flatten into all pairwise combinations
-    //prep_input_ch = tumor_input_ch.combine(normal_input_ch)
-
-    // run for each tuple (which is a combination of one tumor and the same repeated normal)
-    //prep_data_output = PREP_CNA_DATA(prep_input_ch, params.patient, params.sex, params.build, params.targets_bed, params.allelecounter_exe, params.alleles_prefix, params.loci_prefix)
-    //all_allelecounter_files_ch = prep_data_output.collect()
-    //cnalign_output = GET_CNALIGN_OBJ(all_allelecounter_files_ch, params.normal_sample, params.patient, params.sex, params.build, params.gccontentfile, params.replictimingfile)
-
-    // run SNP-pileup
-    //snp_pileup_output = SNP_UP(params.polymorphic_sites, params.polymorphic_sites_tbi, all_bams_ch, all_bam_indices_ch, params.patient)
 
 }
 
