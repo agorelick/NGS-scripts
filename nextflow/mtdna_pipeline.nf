@@ -31,7 +31,7 @@ println "First row: ${rows[0]}"
 
 
 // Create tuple channel: (sample, bam, index, order)
-def sample_ch = Channel.from( rows.collect { [it.sample, it.input_mbam, it.input_mbam_index, it.order] } )
+def sample_ch = Channel.from( rows.collect { [it.sample, it.order, it.input_mbam, it.input_mbam_index] } )
 
 // Set scalar params using first row with non-null value
 def first_full_row = rows.find { it.patient }  // or any other required field
@@ -67,6 +67,11 @@ params.ref_shifted_fai = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data
 params.ref_shifted_pac = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/mtdna/Homo_sapiens_assembly38.chrM.shifted_by_8000_bases.fasta.pac"
 params.ref_shifted_sa = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/mtdna/Homo_sapiens_assembly38.chrM.shifted_by_8000_bases.fasta.sa"
 params.ref_shifted_dict = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/mtdna/Homo_sapiens_assembly38.chrM.shifted_by_8000_bases.dict"
+
+params.control_region_shifted_intervals = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/mtdna/control_region_shifted.chrM.interval_list"
+params.non_control_region_intervals = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/mtdna/non_control_region.chrM.interval_list"
+params.shift_back_chain = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/mtdna/ShiftBack.chain"
+
 
 // additional reference files with index files
 // params.polymorphic_sites = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/dbSNP/dbSNP_GRCh38/00-common_all_renamedchrs.vcf.gz"
@@ -110,7 +115,7 @@ process CLEAN_CHRM_BAM_TO_FASTQ {
   queue 'short'
 
   input:
-  tuple val(sample), path(input_mbam), path(input_mbam_index), val(sample_order)
+  tuple val(sample), val(sample_order), path(input_mbam), path(input_mbam_index)
   val make_dirs_ch
 
   output:
@@ -132,6 +137,13 @@ process CLEAN_CHRM_BAM_TO_FASTQ {
 }
 
 process SAMTOFASTQ {
+
+  tag "$sample"
+  cpus 1
+  memory '8GB'
+  time '20m'
+  executor 'slurm'
+  queue 'short'
 
   input:
   tuple val(sample), val(sample_order), path(reverted_mbam)
@@ -251,12 +263,12 @@ process MERGE_BAM_ALIGNMENTS {
     publishDir params.realigned_mbam_dir, mode: 'copy'
 
     input:
-    // single joined tuple: [sample, sample_order, raw_sam, reverted_bam, reverted_bam_sbi]
-    tuple val(sample), val(sample_order), path(sample_raw_sam), path(reverted_mbam), path(reverted_mbam_sbi)
+    // single joined tuple: [sample, sample_order, raw_sam, reverted_bam]
+    tuple val(sample), val(sample_order), path(sample_raw_sam), path(reverted_mbam)
     tuple path(ref_fasta), path(ref_amb), path(ref_ann), path(ref_bwt), path(ref_fai), path(ref_pac), path(ref_sa), path(ref_dict)
 
     output:
-    tuple val(sample), val(sample_order), path("${sample}_merged.bam"), path("${sample}_merged.bam.bai")
+    tuple val(sample), val(sample_order), path("${sample}_merged.bam"), path("${sample}_merged.bai")
 
     script:
     """
@@ -286,12 +298,12 @@ process MERGE_BAM_ALIGNMENTS_SHIFTED {
     publishDir params.realigned_mbam_dir, mode: 'copy'
 
     input:
-    // single joined tuple: [sample, sample_order, shifted_raw_sam, reverted_bam, reverted_bam_sbi]
-    tuple val(sample), val(sample_order), path(sample_raw_sam_shifted), path(reverted_mbam), path(reverted_mbam_sbi)
+    // single joined tuple: [sample, sample_order, shifted_raw_sam, reverted_bam]
+    tuple val(sample), val(sample_order), path(sample_raw_sam_shifted), path(reverted_mbam)
     tuple path(ref_shifted_fasta), path(ref_shifted_amb), path(ref_shifted_ann), path(ref_shifted_bwt), path(ref_shifted_fai), path(ref_shifted_pac), path(ref_shifted_sa), path(ref_shifted_dict)
 
     output:
-    tuple val(sample), val(sample_order), path("${sample}_shifted_merged.bam"), path("${sample}_shifted_merged.bam.bai")
+    tuple val(sample), val(sample_order), path("${sample}_shifted_merged.bam"), path("${sample}_shifted_merged.bai")
 
     script:
     """
@@ -305,140 +317,343 @@ process MERGE_BAM_ALIGNMENTS_SHIFTED {
     """
 }
 
- 
-// 
-// /*
-//  * Run GATK Mutect2 for multi-sample tumor/normal variant calling
-//  */
-// process GATK_MUTECT2 {
-// 
-//     tag "$region"
-//     cpus 18
-//     memory '32GB'
-//     time '24h'  // 2h is usually sufficient
-//     executor 'slurm'
-//     queue 'medium'
-// 
-//     publishDir params.mutect_dir, mode: 'copy'
-// 
-//     input:
-//     tuple val(chr), val(start), val(end), val(region)               // split genome regions into equal sized chunks for parallelization
-//     path bed_file
-//     path all_bams
-//     path all_bam_indices
-//     val patient                                                     // patient ID
-//     val normal_sample                                               // SM value for the normal sample
-//     path output_dir                                                 // location for output files
-//     tuple path(polymorphic_sites), path(polymorphic_sites_tbi)      // polymorphic sites
-//     tuple path(germline_resource), path(germline_resource_tbi)      // germline resource
-//     tuple path(panel_of_normals), path(panel_of_normals_idx)        // panel of normals
-//     tuple path(ref_fasta), path(ref_amb), path(ref_ann), path(ref_bwt), path(ref_fai), path(ref_pac), path(ref_sa), path(ref_dict)  // ref genome files
-// 
-//     output:
-//     tuple val(region), path("regions_${region}.bed"), path("${patient}_${region}.vcf.gz"), path("${patient}_${region}.vcf.gz.tbi"), path("${patient}_${region}.vcf.gz.stats"), path("${patient}_${region}.f1r2.tar.gz")
-// 
-//     script:
-//     def bams_line = all_bams.collect { bam -> "-I ${bam}" }.join(' ')
-//     """
-// 
-//     # subset the bed file for regions within the specified range
-//     module load bedtools/2.31.0
-//     echo -e "${chr}\t${start}\t${end}" | bedtools intersect -a ${bed_file} -b - > regions_${region}.bed
-// 
-//     # run mutect2 for this region
-//     conda run -n gatk_4.6.1.0 gatk Mutect2 -R $ref_fasta \
-//         $bams_line \
-//         -normal $normal_sample \
-//         -L regions_${region}.bed \
-//         --f1r2-tar-gz ${patient}_${region}.f1r2.tar.gz \
-//         --native-pair-hmm-threads 16 \
-//         -O ${patient}_${region}.vcf.gz \
-//         --germline-resource $germline_resource \
-//         --panel-of-normals $panel_of_normals \
-//     """
-// }
-//  
-// /*
-//  * filter mutect calls
-//  */
-// process FILTER_MUTECT_CALLS { 
-// 
-//     tag "$patient"
-//     cpus 8
-//     memory '16GB'
-//     time '30m'
-//     executor 'slurm'
-//     queue 'short'
-// 
-//     publishDir params.mutect_dir, mode: 'copy'
-// 
-//     input:
-//     val patient
-//     tuple path(raw_vcf), path(raw_vcf_tbi), path(raw_vcf_stats), path(raw_artifact_priors)
-//     tuple path(ref_fasta), path(ref_amb), path(ref_ann), path(ref_bwt), path(ref_fai), path(ref_pac), path(ref_sa), path(ref_dict)  // ref genome files
-// 
-//     output:
-//     tuple path("${patient}_unfiltered_norm.vcf.gz"), path("${patient}_unfiltered_norm.vcf.gz.tbi"), path("${patient}_filtered.vcf.gz"), path("${patient}_filtered.vcf.gz.tbi")
-// 
-//     script:
-//     """
-// 
-//     module load bcftools/1.21
-// 
-//     # FilterMutectCalls
-//     conda run -n gatk_4.6.1.0 gatk FilterMutectCalls -R $ref_fasta -V $raw_vcf --orientation-bias-artifact-priors $raw_artifact_priors -O ${patient}_unfiltered.vcf.gz
-// 
-//     # IndexFeatureFile
-//     conda run -n gatk_4.6.1.0 gatk IndexFeatureFile -I ${patient}_unfiltered.vcf.gz 
-// 
-//     # normalize VCF to split multi-allelic sites
-//     bcftools norm --multiallelics -both --fasta-ref $ref_fasta ${patient}_unfiltered.vcf.gz | bcftools view -I -O z -o ${patient}_unfiltered_norm.vcf.gz -
-// 
-//     # indexing normalized VCF
-//     conda run -n gatk_4.6.1.0 gatk IndexFeatureFile -I ${patient}_unfiltered_norm.vcf.gz 
-// 
-//     # filtering mutations
-//     bcftools view -i "FILTER='PASS'" ${patient}_unfiltered_norm.vcf.gz | bcftools view -I -O z -o ${patient}_filtered.vcf.gz -
-// 
-//     # indexing filtered VCF
-//     conda run -n gatk_4.6.1.0 gatk IndexFeatureFile -I ${patient}_filtered.vcf.gz 
-//     """
-// }
-// 
-// /*
-//  * Run VCF2MAF on filtered VCF file for each sample
-//  */
-// process VCF2MAF {
-// 
-//     tag "$sample"
-//     cpus 1
-//     memory '16GB'
-//     time '1h'
-//     executor 'slurm'
-//     queue 'short'
-// 
-//     publishDir params.maf_dir, mode: 'copy'
-// 
-// 
-//     input:
-//     tuple val(sample), val(fq_prefix), val(fq_dir), val(sample_order)
-//     path filtered_vcf
-//     path filtered_vcf_tbi
-// 
-//     output:
-//     path "${sample}.maf"
-// 
-//     script:
-//     """
-//     ## subset the multi-sample VCF for this sample
-//     module load bcftools/1.21
-//     bcftools view $filtered_vcf -s $sample > ${sample}.vcf
-// 
-//     ## run vcfmaf to get a sample-specific maf
-//     conda run -n vep perl /home/alg2264/repos/vcf2maf/vcf2maf.pl --input-vcf ${sample}.vcf --output-maf ${sample}.maf --tumor-id ${sample} --remap-chain /home/alg2264/repos/vcf2maf/data/hg38_to_GRCh38.chain
-//     """
-// }
-// 
+
+
+/*
+ * Fix read group tags in merged BAM to ensure all reads have an RG tag
+ * that matches the @RG header entry. This is necessary because MergeBamAlignment
+ * can carry forward stale RG tags from the original whole-genome alignment
+ * that have no corresponding @RG header entry in the chrM-realigned BAM,
+ * causing Mutect2 to fail with "null sample name" errors.
+ */
+
+process FIX_READ_GROUPS {
+
+    tag "$sample"
+    cpus 2
+    memory '8GB'
+    time '30m'
+    executor 'slurm'
+    queue 'short'
+    publishDir params.realigned_mbam_dir, mode: 'copy'
+
+    input:
+    tuple val(sample), val(sample_order), path(merged_bam), path(merged_bam_bai)
+
+    output:
+    tuple val(sample), val(sample_order), path("${sample}_merged_fixed.bam"), path("${sample}_merged_fixed.bai")
+
+    script:
+    """
+    conda run -n gatk_4.6.1.0 picard AddOrReplaceReadGroups \\
+        -I ${merged_bam} \\
+        -O ${sample}_merged_fixed.bam \\
+        --RGID ${sample} \\
+        --RGSM ${sample} \\
+        --RGLB ${sample} \\
+        --RGPL ILLUMINA \\
+        --RGPU 1 \\
+        --QUIET true \\
+        --CREATE_INDEX true \\
+        --VALIDATION_STRINGENCY LENIENT
+    """
+}
+
+/*
+ * Same RG fix for the shifted-reference merged BAM.
+ */
+
+process FIX_READ_GROUPS_SHIFTED {
+
+    tag "$sample"
+    cpus 2
+    memory '8GB'
+    time '30m'
+    executor 'slurm'
+    queue 'short'
+    publishDir params.realigned_mbam_dir, mode: 'copy'
+
+    input:
+    tuple val(sample), val(sample_order), path(merged_bam_shifted), path(merged_bam_shifted_bai)
+
+    output:
+    tuple val(sample), val(sample_order), path("${sample}_shifted_merged_fixed.bam"), path("${sample}_shifted_merged_fixed.bai")
+
+    script:
+    """
+    conda run -n gatk_4.6.1.0 picard AddOrReplaceReadGroups \\
+        -I ${merged_bam_shifted} \\
+        -O ${sample}_shifted_merged_fixed.bam \\
+        --RGID ${sample} \\
+        --RGSM ${sample} \\
+        --RGLB ${sample} \\
+        --RGPL ILLUMINA \\
+        --RGPU 1 \\
+        --QUIET true \\
+        --CREATE_INDEX true \\
+        --VALIDATION_STRINGENCY LENIENT
+    """
+}
+
+
+
+
+/*
+ * Run Mutect2 on the non-shifted (non-control region) BAM
+ */
+
+process MUTECT2 {
+
+publishDir params.mutect_dir, mode: 'copy'
+
+    tag "$patient"
+    cpus 4
+    memory '16GB'
+    time '30m'
+    executor 'slurm'
+    queue 'short'
+
+    input:
+    path all_bams
+    path all_bam_indices
+    tuple path(ref_fasta), path(ref_amb), path(ref_ann), path(ref_bwt), path(ref_fai), path(ref_pac), path(ref_sa), path(ref_dict)
+    path non_control_region_intervals
+    val patient
+
+    output:
+    tuple path("${patient}_nonshifted.vcf.gz"), path("${patient}_nonshifted.vcf.gz.tbi"), path("${patient}_nonshifted.vcf.gz.stats"), path("${patient}_nonshifted.f1r2.tar.gz")
+
+    script:
+    def bams_line = all_bams.collect { bam -> "-I ${bam}" }.join(' ')
+    """
+    conda run -n gatk_4.6.1.0 gatk Mutect2 \\
+        -R ${ref_fasta} \\
+        ${bams_line} \\
+        --mitochondria-mode \\
+        -L ${non_control_region_intervals} \\
+        --annotation StrandBiasBySample \\
+        --read-filter MateOnSameContigOrNoMappedMateReadFilter \\
+        --read-filter MateUnmappedAndUnmappedReadFilter \\
+        --max-reads-per-alignment-start 75 \\
+        --max-mnp-distance 0 \\
+        --f1r2-tar-gz ${patient}_nonshifted.f1r2.tar.gz \\
+        -O ${patient}_nonshifted.vcf.gz
+    """
+}
+
+
+
+/*
+ * Run Mutect2 on the shifted (control region) BAM, then liftover
+ * the resulting VCF back to standard chrM coordinates.
+ *
+ * Mutect2 is run in --mitochondria-mode on the shifted-reference BAM,
+ * restricted to the control region interval list (in shifted coordinates).
+ * LiftoverVcf then maps variant positions back to standard chrM coords
+ * using the shift-back chain file.
+ */
+
+process MUTECT2_SHIFTED {
+
+    publishDir params.mutect_dir, mode: 'copy'
+
+    tag "$patient"
+    cpus 4
+    memory '16GB'
+    time '30m'
+    executor 'slurm'
+    queue 'short'
+
+    input:
+    path all_shifted_bams
+    path all_shifted_bam_indices
+    tuple path(ref_shifted_fasta), path(ref_shifted_amb), path(ref_shifted_ann), path(ref_shifted_bwt), path(ref_shifted_fai), path(ref_shifted_pac), path(ref_shifted_sa), path(ref_shifted_dict)
+    path control_region_shifted_intervals
+    val patient
+
+    output:
+    tuple path("${patient}_shifted.vcf.gz"), path("${patient}_shifted.vcf.gz.tbi"), path("${patient}_shifted.vcf.gz.stats"), path("${patient}_shifted.f1r2.tar.gz")
+
+    script:
+    def shifted_bams_line = all_shifted_bams.collect { bam -> "-I ${bam}" }.join(' ')
+    """
+    conda run -n gatk_4.6.1.0 gatk Mutect2 \\
+        -R ${ref_shifted_fasta} \\
+        ${shifted_bams_line} \\
+        --mitochondria-mode \\
+        -L ${control_region_shifted_intervals} \\
+        --annotation StrandBiasBySample \\
+        --read-filter MateOnSameContigOrNoMappedMateReadFilter \\
+        --read-filter MateUnmappedAndUnmappedReadFilter \\
+        --max-reads-per-alignment-start 75 \\
+        --max-mnp-distance 0 \\
+        --f1r2-tar-gz ${patient}_shifted.f1r2.tar.gz \\
+        -O ${patient}_shifted.vcf.gz
+    """
+}
+
+/*
+ * Liftover the shifted Mutect2 VCF back to standard chrM coordinates.
+ *
+ * Uses the shift-back chain file generated by GATK ShiftFasta to map
+ * variant positions from shifted chrM coordinates back to standard chrM.
+ * Variants that cannot be lifted over are written to a separate reject file
+ * for inspection.
+ *
+ * --RECOVER_SWAPPED_REF_ALT: rescues variants where ref/alt are swapped
+ * after liftover due to strand orientation differences between the two
+ * reference versions.
+ */
+
+process LIFTOVER_VCF {
+
+    publishDir params.mutect_dir, mode: 'copy'
+
+    tag "$patient"
+    cpus 2
+    memory '8GB'
+    time '30m'
+    executor 'slurm'
+    queue 'short'
+
+    input:
+    tuple path(shifted_vcf), path(shifted_vcf_tbi), path(shifted_vcf_stats), path(shifted_f1r2)
+    tuple path(ref_fasta), path(ref_amb), path(ref_ann), path(ref_bwt), path(ref_fai), path(ref_pac), path(ref_sa), path(ref_dict)
+    path shift_back_chain
+    val patient
+
+    output:
+    tuple path("${patient}_shifted_back.vcf.gz"), path("${patient}_shifted_back.vcf.gz.tbi"), path(shifted_vcf_stats), path(shifted_f1r2)
+
+    script:
+    """
+    conda run -n gatk_4.6.1.0 picard LiftoverVcf \\
+        -I ${shifted_vcf} \\
+        -O ${patient}_shifted_back.vcf.gz \\
+        --CHAIN ${shift_back_chain} \\
+        --REJECT ${patient}_liftover_rejected.vcf.gz \\
+        -R ${ref_fasta} \\
+        --RECOVER_SWAPPED_REF_ALT true \\
+        --VALIDATION_STRINGENCY LENIENT \\
+        --CREATE_INDEX true
+    """
+}
+
+
+/*
+ * Merge the standard (non-control region) and shifted-back (control region)
+ * VCFs into a single whole-chrM VCF, then apply FilterMutectCalls.
+ *
+ * MergeVcfs combines the two complementary callsets into one VCF spanning
+ * the entire mitochondrial genome. The input VCFs must share the same
+ * coordinate system (both in standard chrM coords after liftover).
+ *
+ * FilterMutectCalls applies mitochondria-specific filters:
+ *   --mitochondria-mode      : sets appropriate filter thresholds for MT
+ *   --stats                  : merged stats from both Mutect2 runs, used to
+ *                              train the somatic/artifact model
+ *   --ob-priors              : orientation bias artifact priors from
+ *                              LearnReadOrientationModel (FFPE/OxoG)
+ *   --min-allele-fraction    : hard VAF floor (0.01 = 1%)
+ *   --max-alt-allele-count   : filter noisy multiallelic pileups
+ *
+ * Note: MergeStats and LearnReadOrientationModel must be run before this
+ * process. Their outputs (merged stats, artifact priors) are passed in
+ * alongside the two VCFs.
+ */
+
+process MERGE_VCFS_AND_FILTER {
+
+    tag "$patient"
+    cpus 2
+    memory '8GB'
+    time '1h'
+    executor 'slurm'
+    queue 'short'
+
+    publishDir params.mutect_dir, mode: 'copy'
+
+    input:
+    tuple path(vcf), path(vcf_tbi), path(vcf_stats), path(f1r2)
+    tuple path(vcf_shifted_back), path(vcf_shifted_back_tbi), path(vcf_shifted_back_stats), path(f1r2_shifted)
+    tuple path(ref_fasta), path(ref_amb), path(ref_ann), path(ref_bwt), path(ref_fai), path(ref_pac), path(ref_sa), path(ref_dict)
+    val patient
+
+    output:
+    tuple path("${patient}_filtered.vcf.gz"), path("${patient}_filtered.vcf.gz.tbi")
+
+    script:
+    """
+    # Step 1: Merge stats files from both Mutect2 runs
+    conda run -n gatk_4.6.1.0 gatk MergeMutectStats \\
+        --stats ${vcf_stats} \\
+        --stats ${vcf_shifted_back_stats} \\
+        -O ${patient}_merged.stats
+
+    # Step 2: Learn orientation bias artifact priors from both f1r2 tarballs
+    conda run -n gatk_4.6.1.0 gatk LearnReadOrientationModel \\
+        -I ${f1r2} \\
+        -I ${f1r2_shifted} \\
+        -O ${patient}_artifact_priors.tar.gz
+
+    # Step 3: Merge the two VCFs into a single whole-chrM VCF
+    conda run -n gatk_4.6.1.0 picard MergeVcfs \\
+        -I ${vcf} \\
+        -I ${vcf_shifted_back} \\
+        -O ${patient}_merged.vcf.gz \\
+        --SEQUENCE_DICTIONARY ${ref_dict} \\
+        --CREATE_INDEX true \\
+        --VALIDATION_STRINGENCY LENIENT
+
+    # Step 4: Filter the merged VCF
+    conda run -n gatk_4.6.1.0 gatk FilterMutectCalls \\
+        -V ${patient}_merged.vcf.gz \\
+        -R ${ref_fasta} \\
+        -O ${patient}_filtered.vcf.gz \\
+        --stats ${patient}_merged.stats \\
+        --mitochondria-mode \\
+        --ob-priors ${patient}_artifact_priors.tar.gz \\
+        --min-allele-fraction 0.01 \\
+        --max-alt-allele-count 4 \\
+        --create-output-variant-index true
+    """
+}
+
+
+
+
+/*
+ * Run VCF2MAF on filtered VCF file for each sample
+ */
+process VCF2MAF {
+
+    tag "$sample"
+    cpus 1
+    memory '16GB'
+    time '20m'
+    executor 'slurm'
+    queue 'short'
+
+    publishDir params.maf_dir, mode: 'copy'
+
+    input:
+    tuple val(sample), val(fq_prefix), val(fq_dir), val(sample_order)
+    tuple path(filtered_vcf), path(filtered_vcf_tbi)
+
+    output:
+    path "${sample}.maf"
+
+    script:
+    """
+    ## subset the multi-sample VCF for this sample
+    module load bcftools/1.21
+    bcftools view $filtered_vcf -s $sample > ${sample}.vcf
+
+    ## run vcfmaf to get a sample-specific maf
+    conda run -n vep perl /home/alg2264/repos/vcf2maf/vcf2maf.pl --input-vcf ${sample}.vcf --output-maf ${sample}.maf --tumor-id ${sample} --remap-chain /home/alg2264/repos/vcf2maf/data/hg38_to_GRCh38.chain
+    """
+}
+
 
 
 /*
@@ -467,6 +682,10 @@ workflow {
      ref_shifted_sa = file(params.ref_shifted_sa)
      ref_shifted_dict = file(params.ref_shifted_dict)
      ref_shifted_files = tuple(ref_shifted_fasta, ref_shifted_amb, ref_shifted_ann, ref_shifted_bwt, ref_shifted_fai, ref_shifted_pac, ref_shifted_sa, ref_shifted_dict)
+
+     control_region_shifted_intervals = file(params.control_region_shifted_intervals)
+     non_control_region_intervals = file(params.non_control_region_intervals)
+
  
 //     // polymorphic sites
 //     polymorphic_sites = file(params.polymorphic_sites)
@@ -477,17 +696,6 @@ workflow {
 //     germline_resource = file(params.germline_resource)
 //     germline_resource_tbi = file(params.germline_resource_tbi)
 //     germline_resource_files = tuple(germline_resource, germline_resource_tbi)
-// 
-//     // panel of normals
-//     panel_of_normals = file(params.panel_of_normals)
-//     panel_of_normals_idx = file(params.panel_of_normals_idx)
-//     panel_of_normals_files = tuple(panel_of_normals, panel_of_normals_idx)
-// 
-//     // channel of genomic chunks
-//     genome_chunk_ch = Channel.fromPath(params.genome_chunks)
-//                     .splitCsv(header: false, sep: ",", strip: true)
-//                     .map { row -> tuple(row[0], row[1], row[2], row[3]) }
-// 
 // 
 
     // =============================
@@ -503,74 +711,53 @@ workflow {
 
     // BWA-MEM alignment
     bwa_mem_output = BWA_MEM(samtofastq_output, ref_files)
-
-    // BWA-MEM alignment (shifted)
     bwa_mem_shifted_output = BWA_MEM_SHIFTED(samtofastq_output, ref_shifted_files)
 
     // merge the bwa-mem output with revert-sam output by the sample name
     merge_input = bwa_mem_output
-        .join(revert_sam_output, by: [0, 1])
-
-    // merge the bwa-mem output with revert-sam output by the sample name
+        .join(ubam_output, by: [0, 1])
     merge_shifted_input = bwa_mem_shifted_output
-        .join(revert_sam_output, by: [0, 1])
+        .join(ubam_output, by: [0, 1])
 
     // MergeBamAlignment
     merge_bam_output = MERGE_BAM_ALIGNMENTS(merge_input, ref_files)
-
-    // (shifted) MergeBamAlignment
     merge_bam_shifted_output = MERGE_BAM_ALIGNMENTS_SHIFTED(merge_shifted_input, ref_shifted_files)
 
+    // Fix stale RG tags before variant calling
+    fix_rg_output = FIX_READ_GROUPS(merge_bam_output)
+    fix_rg_shifted_output = FIX_READ_GROUPS_SHIFTED(merge_bam_shifted_output)
 
-
-
-
-    // Run SortSam on valid samples
-    //sortsam_output = SAMTOOLS_SORT(bwa_mem_output, ref_files)
-
-    // Run MarkDuplicates on sorted bam files
-    //markdup_output = GATK_MARKDUP(sortsam_output, ref_files)
-
-    // Extracting each element into separate channels
-    //preprocessed_sample_ch = applybqsr_output.map { it[0] }
-    //preprocessed_bam_ch = applybqsr_output.map { it[1] }
-    //preprocessed_bam_index_ch = applybqsr_output.map { it[2] }
 
     // Collect bams/indices
-    //all_bams_ch = preprocessed_bam_ch.collect()
-    //all_bam_indices_ch = preprocessed_bam_index_ch.collect()
+    sample_ch = fix_rg_output.map { it[0] }
+    sample_order_ch = fix_rg_output.map { it[1] }
+    bam_ch = fix_rg_output.map { it[2] }
+    bam_index_ch = fix_rg_output.map { it[3] }
+    all_bams_ch = bam_ch.collect()
+    all_bam_indices_ch = bam_index_ch.collect()
+    
+    
+    // Collect shifted bams/indices
+    shifted_sample_ch = fix_rg_shifted_output.map { it[0] }
+    shifted_sample_order_ch = fix_rg_shifted_output.map { it[1] }
+    shifted_bam_ch = fix_rg_shifted_output.map { it[2] }
+    shifted_bam_index_ch = fix_rg_shifted_output.map { it[3] }
+    all_shifted_bams_ch = shifted_bam_ch.collect()
+    all_shifted_bam_indices_ch = shifted_bam_index_ch.collect()
 
-    // =============================
-    // variant calling, filtering
-    // =============================
 
-    // call mutations in multi-sample paired T/N mode
-    //mutect_output = GATK_MUTECT2(genome_chunk_ch, params.targets_bed, all_bams_ch, all_bam_indices_ch, params.patient, params.normal_sample, params.mutect_dir, polymorphic_sites_files, germline_resource_files, panel_of_normals_files, ref_files)
+    // call variants in the non-shifted VCF
+    mutect2_output = MUTECT2(all_bams_ch, all_bam_indices_ch, ref_files, non_control_region_intervals, params.patient)
+    mutect2_shifted_output = MUTECT2_SHIFTED(all_shifted_bams_ch, all_shifted_bam_indices_ch, ref_shifted_files, control_region_shifted_intervals, params.patient)
+    
+    // lift over the shifted VCF 
+    liftover_output = LIFTOVER_VCF(mutect2_shifted_output, ref_files, params.shift_back_chain, params.patient)
 
-    // Extracting each element into separate channels
-    //region_ch = mutect_output.map { it[0] }
-    //region_bed_ch = mutect_output.map { it[1] }
-    //region_vcf_ch = mutect_output.map { it[2] }
-    //region_vcf_tbi_ch = mutect_output.map { it[3] }
-    //region_stats_ch = mutect_output.map { it[4] }
-    //region_f1r2_ch = mutect_output.map { it[5] }
-
-    // collect the bam files so that we can do multi-sample variant calling
-    //all_vcf_ch = region_vcf_ch.collect()
-    //all_vcf_tbi_ch = region_vcf_tbi_ch.collect()
-    //all_stats_ch = region_stats_ch.collect()
-    //all_f1r2_ch = region_f1r2_ch.collect()
-
-    // merge results from mutect for each genomic chunk into a single file
-    //mergeregions_output = MERGE_REGIONS(params.patient, all_vcf_ch, all_vcf_tbi_ch, all_stats_ch, all_f1r2_ch)
-
-    // filter mutect calls
-    //filter_calls_output = FILTER_MUTECT_CALLS(params.patient, mergeregions_output, ref_files)
-    //filtered_vcf_ch = filter_calls_output.map { it[2] }
-    //filtered_vcf_tbi_ch = filter_calls_output.map { it[3] }
+    // merge standard and shifted VCFs, apply filtering
+    filtered_output = MERGE_VCFS_AND_FILTER(mutect2_output, liftover_output, ref_files, params.patient)
 
     // VCF2MAF
-    //vcf2maf_output = VCF2MAF(sample_ch, filtered_vcf_ch, filtered_vcf_tbi_ch)
+    vcf2maf_output = VCF2MAF(sample_ch, filtered_output)
 
 }
 
