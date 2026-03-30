@@ -71,7 +71,9 @@ params.ref_shifted_dict = "/n/data1/hms/genetics/naxerova/lab/alex/reference_dat
 params.control_region_shifted_intervals = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/mtdna/control_region_shifted.chrM.interval_list"
 params.non_control_region_intervals = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/mtdna/non_control_region.chrM.interval_list"
 params.shift_back_chain = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/mtdna/ShiftBack.chain"
-
+params.blacklist_bed = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/mtdna/blacklist_sites.hg38.chrM.bed"
+params.blacklist_bed_idx = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/mtdna/blacklist_sites.hg38.chrM.bed.idx"
+params.hg38_to_GRCh38_chain = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/mtdna/hg38_to_GRCh38.chain"
 
 // additional reference files with index files
 // params.polymorphic_sites = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/dbSNP/dbSNP_GRCh38/00-common_all_renamedchrs.vcf.gz"
@@ -621,6 +623,91 @@ process MERGE_VCFS_AND_FILTER {
 
 
 
+/*
+ * Apply blacklist site filtering to the filtered chrM VCF.
+ *
+ * Uses GATK VariantFiltration to hard-mask known artifact sites in the
+ * mitochondrial genome. These are positions that produce systematic false
+ * positive variant calls that pass all Mutect2 and FilterMutectCalls
+ * filters, including homopolymer artifacts, high-identity NuMT hotspots,
+ * and empirically identified recurrent sequencing artifacts.
+ *
+ * The blacklist VCF is available from the GATK resource bundle:
+ *   gs://gcp-public-data--broad-references/hg38/v0/chrM/blacklist_sites.hg38.chrM.vcf
+ *
+ * VariantFiltration masks any variant overlapping a blacklisted site by
+ * adding a "blacklisted_site" entry to the FILTER field. The subsequent
+ * SelectVariants step removes all non-PASS records, which includes these
+ * newly masked sites.
+ *
+ * Note: --mask-extension 0 means exact position matching only — no
+ * flanking bases are masked beyond the blacklisted site itself.
+ */
+
+process BLACKLIST_FILTER {
+
+    tag "$patient"
+    cpus 2
+    memory '8GB'
+    time '30m'
+    executor 'slurm'
+    queue 'short'
+    publishDir params.mutect_dir, mode: 'copy'
+
+    input:
+    tuple path(filtered_vcf), path(filtered_vcf_tbi)
+    tuple path(ref_fasta), path(ref_amb), path(ref_ann), path(ref_bwt), path(ref_fai), path(ref_pac), path(ref_sa), path(ref_dict)
+    tuple path(blacklist_bed), path(blacklist_bed_idx)
+    val patient
+
+    output:
+    tuple path("${patient}_blacklist_filtered.vcf.gz"), path("${patient}_blacklist_filtered.vcf.gz.tbi")
+
+    script:
+    """
+    # Step 1: Mask blacklisted sites with VariantFiltration
+    # Adds FILTER=blacklisted_site to any variant overlapping the blacklist.
+    # Does not remove variants yet — just tags them.
+    conda run -n gatk_4.6.1.0 gatk VariantFiltration \\
+        -V ${filtered_vcf} \\
+        -R ${ref_fasta} \\
+        -O ${patient}_masked.vcf.gz \\
+        --mask ${blacklist_bed} \\
+        --mask-extension 0 \\
+        --mask-name "blacklisted_site" \\
+        --create-output-variant-index true
+
+    # Step 2: Split multi-allelic sites and left-align indels
+    # Required before SelectVariants to ensure clean biallelic representation.
+    # --split-multi-allelics: one ALT allele per record
+    # --dont-trim-alleles false: trim to minimal representation
+    conda run -n gatk_4.6.1.0 gatk LeftAlignAndTrimVariants \\
+        -V ${patient}_masked.vcf.gz \\
+        -R ${ref_fasta} \\
+        -O ${patient}_split.vcf.gz \\
+        --split-multi-allelics \\
+        --dont-trim-alleles false \\
+        --create-output-variant-index true
+
+    # Step 3: Remove all non-PASS sites
+    # This removes both the blacklisted_site-tagged variants from Step 1
+    # and any remaining filtered variants from FilterMutectCalls.
+    conda run -n gatk_4.6.1.0 gatk SelectVariants \\
+        -V ${patient}_split.vcf.gz \\
+        -R ${ref_fasta} \\
+        -O ${patient}_blacklist_filtered.vcf.gz \\
+        --exclude-filtered \\
+        --remove-unused-alternates \\
+        --create-output-variant-index true
+
+    # Clean up intermediates
+    rm -f ${patient}_masked.vcf.gz ${patient}_masked.vcf.gz.tbi
+    rm -f ${patient}_split.vcf.gz ${patient}_split.vcf.gz.tbi
+    """
+}
+
+
+
 
 /*
  * Run VCF2MAF on filtered VCF file for each sample
@@ -637,20 +724,22 @@ process VCF2MAF {
     publishDir params.maf_dir, mode: 'copy'
 
     input:
-    tuple val(sample), val(fq_prefix), val(fq_dir), val(sample_order)
-    tuple path(filtered_vcf), path(filtered_vcf_tbi)
+    tuple val(sample), val(sample_order), path(input_mbam), path(input_mbam_index)
+    tuple path(blacklist_filtered_vcf), path(blacklist_filtered_vcf_tbi)
+    file hg38_to_GRCh38_chain
+    val patient
 
     output:
-    path "${sample}.maf"
+    path "${sample}_mt.maf"
 
     script:
     """
     ## subset the multi-sample VCF for this sample
     module load bcftools/1.21
-    bcftools view $filtered_vcf -s $sample > ${sample}.vcf
+    bcftools view $blacklist_filtered_vcf -s $sample > ${sample}.vcf
 
     ## run vcfmaf to get a sample-specific maf
-    conda run -n vep perl /home/alg2264/repos/vcf2maf/vcf2maf.pl --input-vcf ${sample}.vcf --output-maf ${sample}.maf --tumor-id ${sample} --remap-chain /home/alg2264/repos/vcf2maf/data/hg38_to_GRCh38.chain
+    conda run -n vep perl /home/alg2264/repos/vcf2maf/vcf2maf.pl --input-vcf ${sample}.vcf --output-maf ${sample}_mt.maf --tumor-id ${sample} --remap-chain ${hg38_to_GRCh38_chain}
     """
 }
 
@@ -685,8 +774,11 @@ workflow {
 
      control_region_shifted_intervals = file(params.control_region_shifted_intervals)
      non_control_region_intervals = file(params.non_control_region_intervals)
+     blacklist_bed = file(params.blacklist_bed)
+     blacklist_bed_idx = file(params.blacklist_bed_idx)
+     blacklist_bed_files = tuple(blacklist_bed, blacklist_bed_idx)
+     hg38_to_GRCh38_chain = file(params.hg38_to_GRCh38_chain)
 
- 
 //     // polymorphic sites
 //     polymorphic_sites = file(params.polymorphic_sites)
 //     polymorphic_sites_tbi = file(params.polymorphic_sites_tbi)
@@ -756,8 +848,11 @@ workflow {
     // merge standard and shifted VCFs, apply filtering
     filtered_output = MERGE_VCFS_AND_FILTER(mutect2_output, liftover_output, ref_files, params.patient)
 
+    // blacklist filtering TO DO
+    blacklist_filter_output = BLACKLIST_FILTER(filtered_output, ref_files, blacklist_bed_files, params.patient)
+
     // VCF2MAF
-    vcf2maf_output = VCF2MAF(sample_ch, filtered_output)
+    vcf2maf_output = VCF2MAF(sample_ch, blacklist_filter_output, hg38_to_GRCh38_chain, params.patient)
 
 }
 
