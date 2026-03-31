@@ -43,7 +43,7 @@ params.output_dir   = first_full_row.output_dir
 params.mosdepth_dir = first_full_row.mosdepth
 
 // dynamically generated parameters
-params.realigned_mbam_dir = "${params.output_dir}/${params.patient}/realigned_mbams"
+params.realigned_mbam_dir = "${params.output_dir}/${params.patient}/realigned_bams"
 params.mutect_dir = "${params.output_dir}/${params.patient}/mutect"
 params.maf_dir = "${params.output_dir}/${params.patient}/mafs"
 params.tmp_dir = "${params.nextflow_dir}/${params.patient}/tmp_files"
@@ -423,7 +423,7 @@ publishDir params.mutect_dir, mode: 'copy'
     val patient
 
     output:
-    tuple path("${patient}_nonshifted.vcf.gz"), path("${patient}_nonshifted.vcf.gz.tbi"), path("${patient}_nonshifted.vcf.gz.stats"), path("${patient}_nonshifted.f1r2.tar.gz")
+    tuple path("${patient}_mt_nonshifted.vcf.gz"), path("${patient}_mt_nonshifted.vcf.gz.tbi"), path("${patient}_mt_nonshifted.vcf.gz.stats"), path("${patient}_mt_nonshifted.f1r2.tar.gz")
 
     script:
     def bams_line = all_bams.collect { bam -> "-I ${bam}" }.join(' ')
@@ -438,8 +438,8 @@ publishDir params.mutect_dir, mode: 'copy'
         --read-filter MateUnmappedAndUnmappedReadFilter \\
         --max-reads-per-alignment-start 75 \\
         --max-mnp-distance 0 \\
-        --f1r2-tar-gz ${patient}_nonshifted.f1r2.tar.gz \\
-        -O ${patient}_nonshifted.vcf.gz
+        --f1r2-tar-gz ${patient}_mt_nonshifted.f1r2.tar.gz \\
+        -O ${patient}_mt_nonshifted.vcf.gz
     """
 }
 
@@ -474,7 +474,7 @@ process MUTECT2_SHIFTED {
     val patient
 
     output:
-    tuple path("${patient}_shifted.vcf.gz"), path("${patient}_shifted.vcf.gz.tbi"), path("${patient}_shifted.vcf.gz.stats"), path("${patient}_shifted.f1r2.tar.gz")
+    tuple path("${patient}_mt_shifted.vcf.gz"), path("${patient}_mt_shifted.vcf.gz.tbi"), path("${patient}_mt_shifted.vcf.gz.stats"), path("${patient}_mt_shifted.f1r2.tar.gz")
 
     script:
     def shifted_bams_line = all_shifted_bams.collect { bam -> "-I ${bam}" }.join(' ')
@@ -489,8 +489,8 @@ process MUTECT2_SHIFTED {
         --read-filter MateUnmappedAndUnmappedReadFilter \\
         --max-reads-per-alignment-start 75 \\
         --max-mnp-distance 0 \\
-        --f1r2-tar-gz ${patient}_shifted.f1r2.tar.gz \\
-        -O ${patient}_shifted.vcf.gz
+        --f1r2-tar-gz ${patient}_mt_shifted.f1r2.tar.gz \\
+        -O ${patient}_mt_shifted.vcf.gz
     """
 }
 
@@ -525,15 +525,15 @@ process LIFTOVER_VCF {
     val patient
 
     output:
-    tuple path("${patient}_shifted_back.vcf.gz"), path("${patient}_shifted_back.vcf.gz.tbi"), path(shifted_vcf_stats), path(shifted_f1r2)
+    tuple path("${patient}_mt_shifted_back.vcf.gz"), path("${patient}_mt_shifted_back.vcf.gz.tbi"), path(shifted_vcf_stats), path(shifted_f1r2)
 
     script:
     """
     conda run -n gatk_4.6.1.0 picard LiftoverVcf \\
         -I ${shifted_vcf} \\
-        -O ${patient}_shifted_back.vcf.gz \\
+        -O ${patient}_mt_shifted_back.vcf.gz \\
         --CHAIN ${shift_back_chain} \\
-        --REJECT ${patient}_liftover_rejected.vcf.gz \\
+        --REJECT ${patient}_mt_liftover_rejected.vcf.gz \\
         -R ${ref_fasta} \\
         --RECOVER_SWAPPED_REF_ALT true \\
         --VALIDATION_STRINGENCY LENIENT \\
@@ -582,7 +582,7 @@ process MERGE_VCFS_AND_FILTER {
     val patient
 
     output:
-    tuple path("${patient}_filtered.vcf.gz"), path("${patient}_filtered.vcf.gz.tbi")
+    tuple path("${patient}_mt_filtered.vcf.gz"), path("${patient}_mt_filtered.vcf.gz.tbi")
 
     script:
     """
@@ -590,31 +590,31 @@ process MERGE_VCFS_AND_FILTER {
     conda run -n gatk_4.6.1.0 gatk MergeMutectStats \\
         --stats ${vcf_stats} \\
         --stats ${vcf_shifted_back_stats} \\
-        -O ${patient}_merged.stats
+        -O ${patient}_mt_merged.stats
 
     # Step 2: Learn orientation bias artifact priors from both f1r2 tarballs
     conda run -n gatk_4.6.1.0 gatk LearnReadOrientationModel \\
         -I ${f1r2} \\
         -I ${f1r2_shifted} \\
-        -O ${patient}_artifact_priors.tar.gz
+        -O ${patient}_mt_artifact_priors.tar.gz
 
     # Step 3: Merge the two VCFs into a single whole-chrM VCF
     conda run -n gatk_4.6.1.0 picard MergeVcfs \\
         -I ${vcf} \\
         -I ${vcf_shifted_back} \\
-        -O ${patient}_merged.vcf.gz \\
+        -O ${patient}_mt_merged.vcf.gz \\
         --SEQUENCE_DICTIONARY ${ref_dict} \\
         --CREATE_INDEX true \\
         --VALIDATION_STRINGENCY LENIENT
 
     # Step 4: Filter the merged VCF
     conda run -n gatk_4.6.1.0 gatk FilterMutectCalls \\
-        -V ${patient}_merged.vcf.gz \\
+        -V ${patient}_mt_merged.vcf.gz \\
         -R ${ref_fasta} \\
-        -O ${patient}_filtered.vcf.gz \\
-        --stats ${patient}_merged.stats \\
+        -O ${patient}_mt_filtered.vcf.gz \\
+        --stats ${patient}_mt_merged.stats \\
         --mitochondria-mode \\
-        --ob-priors ${patient}_artifact_priors.tar.gz \\
+        --ob-priors ${patient}_mt_artifact_priors.tar.gz \\
         --min-allele-fraction 0.01 \\
         --max-alt-allele-count 4 \\
         --create-output-variant-index true
@@ -661,7 +661,7 @@ process BLACKLIST_FILTER {
     val patient
 
     output:
-    tuple path("${patient}_blacklist_filtered.vcf.gz"), path("${patient}_blacklist_filtered.vcf.gz.tbi")
+    tuple path("${patient}_mt_blacklist_filtered.vcf.gz"), path("${patient}_mt_blacklist_filtered.vcf.gz.tbi")
 
     script:
     """
@@ -671,7 +671,7 @@ process BLACKLIST_FILTER {
     conda run -n gatk_4.6.1.0 gatk VariantFiltration \\
         -V ${filtered_vcf} \\
         -R ${ref_fasta} \\
-        -O ${patient}_masked.vcf.gz \\
+        -O ${patient}_mt_masked.vcf.gz \\
         --mask ${blacklist_bed} \\
         --mask-extension 0 \\
         --mask-name "blacklisted_site" \\
@@ -682,9 +682,9 @@ process BLACKLIST_FILTER {
     # --split-multi-allelics: one ALT allele per record
     # --dont-trim-alleles false: trim to minimal representation
     conda run -n gatk_4.6.1.0 gatk LeftAlignAndTrimVariants \\
-        -V ${patient}_masked.vcf.gz \\
+        -V ${patient}_mt_masked.vcf.gz \\
         -R ${ref_fasta} \\
-        -O ${patient}_split.vcf.gz \\
+        -O ${patient}_mt_split.vcf.gz \\
         --split-multi-allelics \\
         --dont-trim-alleles false \\
         --create-output-variant-index true
@@ -693,16 +693,16 @@ process BLACKLIST_FILTER {
     # This removes both the blacklisted_site-tagged variants from Step 1
     # and any remaining filtered variants from FilterMutectCalls.
     conda run -n gatk_4.6.1.0 gatk SelectVariants \\
-        -V ${patient}_split.vcf.gz \\
+        -V ${patient}_mt_split.vcf.gz \\
         -R ${ref_fasta} \\
-        -O ${patient}_blacklist_filtered.vcf.gz \\
+        -O ${patient}_mt_blacklist_filtered.vcf.gz \\
         --exclude-filtered \\
         --remove-unused-alternates \\
         --create-output-variant-index true
 
     # Clean up intermediates
-    rm -f ${patient}_masked.vcf.gz ${patient}_masked.vcf.gz.tbi
-    rm -f ${patient}_split.vcf.gz ${patient}_split.vcf.gz.tbi
+    rm -f ${patient}_mt_masked.vcf.gz ${patient}_mt_masked.vcf.gz.tbi
+    rm -f ${patient}_mt_split.vcf.gz ${patient}_mt_split.vcf.gz.tbi
     """
 }
 
@@ -724,7 +724,7 @@ process VCF2MAF {
     publishDir params.maf_dir, mode: 'copy'
 
     input:
-    tuple val(sample), val(sample_order), path(input_mbam), path(input_mbam_index)
+    val sample
     tuple path(blacklist_filtered_vcf), path(blacklist_filtered_vcf_tbi)
     file hg38_to_GRCh38_chain
     val patient
