@@ -12,7 +12,6 @@ def df = file(params.csv)
     .findAll { it } // remove empty lines
 
 def headers = df[0].split(',') // column names
-
 def rows = df[1..-1].collect { line ->
     def fields = line.split(',')
     [ : ].withDefault { null }.tap { map ->
@@ -35,11 +34,11 @@ def sample_ch = Channel.from( rows.collect { [it.sample, it.orig_bam, it.orig_ba
 
 // Set scalar params using first row with non-null value
 def first_full_row = rows.find { it.patient }
-params.patient        = first_full_row.patient
-params.normal_sample  = first_full_row.normal_sample
-params.sex            = first_full_row.sex
-params.nextflow_dir   = first_full_row.nextflow_dir
-params.output_dir     = first_full_row.output_dir
+params.patient         = first_full_row.patient
+params.normal_sample   = first_full_row.normal_sample
+params.sex             = first_full_row.sex
+params.nextflow_dir    = first_full_row.nextflow_dir
+params.output_dir      = first_full_row.output_dir
 
 // dynamically generated parameters
 params.bam_dir        = "${params.output_dir}/${params.patient}/bams"
@@ -56,16 +55,16 @@ params.tmp_dir        = "${params.nextflow_dir}/${params.patient}/tmp_files"
  * Additional pipeline parameters (use for all WES data)
  */
 // Genome reference files
-params.build        = "hg38"
-params.mt_label     = "chrM"
-params.ref_fasta    = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/assemblies/Homo_sapiens_NCBI_GRCh38/NCBI/GRCh38/Sequence/BWAIndex/genome.fa"
-params.ref_amb      = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/assemblies/Homo_sapiens_NCBI_GRCh38/NCBI/GRCh38/Sequence/BWAIndex/genome.fa.amb"
-params.ref_ann      = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/assemblies/Homo_sapiens_NCBI_GRCh38/NCBI/GRCh38/Sequence/BWAIndex/genome.fa.ann"
-params.ref_bwt      = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/assemblies/Homo_sapiens_NCBI_GRCh38/NCBI/GRCh38/Sequence/BWAIndex/genome.fa.bwt"
-params.ref_fai      = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/assemblies/Homo_sapiens_NCBI_GRCh38/NCBI/GRCh38/Sequence/BWAIndex/genome.fa.fai"
-params.ref_pac      = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/assemblies/Homo_sapiens_NCBI_GRCh38/NCBI/GRCh38/Sequence/BWAIndex/genome.fa.pac"
-params.ref_sa       = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/assemblies/Homo_sapiens_NCBI_GRCh38/NCBI/GRCh38/Sequence/BWAIndex/genome.fa.sa"
-params.ref_dict     = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/assemblies/Homo_sapiens_NCBI_GRCh38/NCBI/GRCh38/Sequence/BWAIndex/genome.dict"
+params.build    = "hg38"
+params.mt_label = "chrM"
+params.ref_fasta = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/assemblies/Homo_sapiens_NCBI_GRCh38/NCBI/GRCh38/Sequence/BWAIndex/genome.fa"
+params.ref_amb   = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/assemblies/Homo_sapiens_NCBI_GRCh38/NCBI/GRCh38/Sequence/BWAIndex/genome.fa.amb"
+params.ref_ann   = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/assemblies/Homo_sapiens_NCBI_GRCh38/NCBI/GRCh38/Sequence/BWAIndex/genome.fa.ann"
+params.ref_bwt   = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/assemblies/Homo_sapiens_NCBI_GRCh38/NCBI/GRCh38/Sequence/BWAIndex/genome.fa.bwt"
+params.ref_fai   = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/assemblies/Homo_sapiens_NCBI_GRCh38/NCBI/GRCh38/Sequence/BWAIndex/genome.fa.fai"
+params.ref_pac   = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/assemblies/Homo_sapiens_NCBI_GRCh38/NCBI/GRCh38/Sequence/BWAIndex/genome.fa.pac"
+params.ref_sa    = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/assemblies/Homo_sapiens_NCBI_GRCh38/NCBI/GRCh38/Sequence/BWAIndex/genome.fa.sa"
+params.ref_dict  = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/assemblies/Homo_sapiens_NCBI_GRCh38/NCBI/GRCh38/Sequence/BWAIndex/genome.dict"
 
 // additional reference files with index files
 params.polymorphic_sites     = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/dbSNP/dbSNP_GRCh38/00-common_all_renamedchrs.vcf.gz"
@@ -85,7 +84,7 @@ params.gccontentfile      = "/n/data1/hms/genetics/naxerova/lab/alex/reference_d
 params.replictimingfile   = "/n/data1/hms/genetics/naxerova/lab/alex/reference_data/ascat/RT_G1000_hg38.txt"
 
 println "params.nextflow_dir: ${params.nextflow_dir}"
-println "params.output_dir:   ${params.output_dir}"
+println "params.output_dir: ${params.output_dir}"
 
 process MAKE_DIRS {
     tag "mkdirs"
@@ -163,49 +162,33 @@ process BAM_TO_FASTQ {
 }
 
 /*
- * Run FastQC on paired-end FASTQ files (pre-trimming QC)
+ * Run FastQC on raw FASTQs (pre-trimming QC) and trim Illumina Universal Adapters.
+ * Combined into a single process so the raw FASTQs can be deleted after both
+ * steps are complete — they are consumed by nothing else downstream.
  */
-process FASTQC {
-    tag "$sample"
-    cpus 2
-    memory '8GB'
-    time '2h'
-    executor 'slurm'
-    queue 'short'
-    publishDir params.fastqc_dir, mode: 'copy'
-
-    input:
-    tuple val(sample), val(sample_order), path(fq1), path(fq2)
-
-    output:
-    tuple path("${sample}_R1_fastqc.html"), path("${sample}_R1_fastqc.zip"),
-          path("${sample}_R2_fastqc.html"), path("${sample}_R2_fastqc.zip")
-
-    script:
-    """
-    conda run -n fastqc_0.11.5 fastqc --threads 2 --outdir . ${fq1} ${fq2}
-    """
-}
-
-/*
- * Trim Illumina Universal Adapters
- */
-process TRIM_ADAPTERS {
+process FASTQC_AND_TRIM {
     tag "$sample"
     cpus 8
-    memory '16GB'
+    memory '32GB'
     time '4h'
     executor 'slurm'
     queue 'short'
+    publishDir params.fastqc_dir, mode: 'copy', pattern: '*_fastqc.{html,zip}'
 
     input:
     tuple val(sample), val(sample_order), path(fq1), path(fq2)
 
     output:
-    tuple val(sample), val(sample_order), path("${sample}_trimmed_R1.fastq.gz"), path("${sample}_trimmed_R2.fastq.gz")
+    tuple val(sample), val(sample_order), path("${sample}_trimmed_R1.fastq.gz"), path("${sample}_trimmed_R2.fastq.gz"), emit: trimmed
+    tuple path("${sample}_R1_fastqc.html"), path("${sample}_R1_fastqc.zip"),
+          path("${sample}_R2_fastqc.html"), path("${sample}_R2_fastqc.zip"), emit: fastqc_reports
 
     script:
     """
+    # FastQC on raw (pre-trimming) FASTQs
+    conda run -n fastqc_0.11.5 fastqc --threads 2 --outdir . ${fq1} ${fq2}
+
+    # Trim Illumina Universal Adapters
     conda run -n cutadapt cutadapt \
         -a AGATCGGAAGAGCACACGTCTGAACTCCAGTCA \
         -A AGATCGGAAGAGCGTCGTGTAGGGAAAGAGTGT \
@@ -213,11 +196,17 @@ process TRIM_ADAPTERS {
         -o ${sample}_trimmed_R1.fastq.gz \
         -p ${sample}_trimmed_R2.fastq.gz \
         ${fq1} ${fq2}
+
+    # raw FASTQs are no longer needed — both consumers (FastQC and cutadapt) are done
+    rm ${fq1} ${fq2}
     """
 }
 
 /*
  * Run BWA-MEM
+ * Deletes trimmed FASTQs after alignment — they are the sole consumer.
+ * The rm targets the staged symlink names, which frees the work-dir copy
+ * created by TRIM_ADAPTERS.
  */
 process BWA_MEM {
     tag "$sample"
@@ -237,13 +226,18 @@ process BWA_MEM {
     script:
     """
     module load gcc/14.2.0 bwa/0.7.18
+
     bwa mem -M -t 8 -R '@RG\\tID:${sample_order}\\tSM:${sample}\\tPL:Illumina' \
         ${ref_fasta} ${trimmed_fq1} ${trimmed_fq2} > ${sample}_raw.sam
+
+    # trimmed FASTQs are no longer needed after alignment
+    rm ${trimmed_fq1} ${trimmed_fq2}
     """
 }
 
 /*
  * Run samtools sort
+ * Deletes the raw SAM after sorting — SAMTOOLS_SORT is the sole consumer.
  */
 process SAMTOOLS_SORT {
     tag "$sample"
@@ -262,15 +256,21 @@ process SAMTOOLS_SORT {
 
     script:
     """
-    date > tmp.txt
     module load gcc/14.2.0 samtools/1.21
+
     samtools sort -@ 8 -m 3G -o ${sample}_sorted.bam ${raw_sam}
     samtools index -@ 8 ${sample}_sorted.bam
+
+    # raw SAM is no longer needed after sorting
+    rm ${raw_sam}
     """
 }
 
 /*
  * Run GATK MarkDuplicates
+ * Deletes the sorted BAM/BAI after duplicate marking — GATK_MARKDUP is the
+ * sole consumer. The publishDir copies realigned.bam to the output directory
+ * before Nextflow stages-out, so deleting sorted.bam here is safe.
  */
 process GATK_MARKDUP {
     tag "$sample"
@@ -297,6 +297,9 @@ process GATK_MARKDUP {
         -R ${ref_fasta} \
         --create-output-bam-index true \
         --spark-master "local[8]"
+
+    # sorted BAM/BAI are no longer needed after duplicate marking
+    rm ${sorted_bam} ${sorted_bai}
     """
 }
 
@@ -332,6 +335,7 @@ process GATK_MUTECT2 {
     def bams_line = all_bams.collect { bam -> "-I ${bam}" }.join(' ')
     """
     module load bedtools/2.31.0
+
     echo -e "${chr}\t${start}\t${end}" | bedtools intersect -a ${bed_file} -b - > regions_${region}.bed
 
     conda run -n gatk_4.6.1.0 gatk Mutect2 -R $ref_fasta \
@@ -348,6 +352,7 @@ process GATK_MUTECT2 {
 
 /*
  * Merge output from mutect2 (VCFs, f1r2-files, stats-files), across genomic chunks
+ * Deletes per-region VCFs, stats, and f1r2 tarballs after merging.
  */
 process MERGE_REGIONS {
     tag "$patient"
@@ -363,16 +368,15 @@ process MERGE_REGIONS {
     path all_vcf_tbi
     path all_stats
     path all_f1r2
-
     publishDir params.mutect_dir, mode: 'copy'
 
     output:
     tuple path("${patient}_raw.vcf.gz"), path("${patient}_raw.vcf.gz.tbi"), path("${patient}_raw.vcf.gz.stats"), path("${patient}_raw.artifact-prior.tar.gz")
 
     script:
-    def vcf_line   = all_vcf.collect   { vcf       -> "${vcf}"             }.join(' ')
+    def vcf_line   = all_vcf.collect   { vcf       -> "${vcf}"            }.join(' ')
     def stats_line = all_stats.collect { statsfile  -> "--stats ${statsfile}" }.join(' ')
-    def f1r2_line  = all_f1r2.collect  { f1r2file  -> "-I ${f1r2file}"      }.join(' ')
+    def f1r2_line  = all_f1r2.collect  { f1r2file   -> "-I ${f1r2file}"   }.join(' ')
     """
     module load bcftools/1.21
 
@@ -383,6 +387,9 @@ process MERGE_REGIONS {
     conda run -n gatk_4.6.1.0 gatk IndexFeatureFile -I ${patient}_raw.vcf.gz
     conda run -n gatk_4.6.1.0 gatk MergeMutectStats ${stats_line} --output ${patient}_raw.vcf.gz.stats
     conda run -n gatk_4.6.1.0 gatk LearnReadOrientationModel ${f1r2_line} --output ${patient}_raw.artifact-prior.tar.gz
+
+    # per-region intermediates are no longer needed after merging
+    rm -f ${all_vcf.join(' ')} ${all_vcf_tbi.join(' ')} ${all_stats.join(' ')} ${all_f1r2.join(' ')}
     """
 }
 
@@ -427,6 +434,9 @@ process FILTER_MUTECT_CALLS {
         | bcftools view -I -O z -o ${patient}_filtered.vcf.gz -
 
     conda run -n gatk_4.6.1.0 gatk IndexFeatureFile -I ${patient}_filtered.vcf.gz
+
+    # intermediate unfiltered VCF (pre-normalization) no longer needed
+    rm -f ${patient}_unfiltered.vcf.gz ${patient}_unfiltered.vcf.gz.tbi
     """
 }
 
@@ -453,6 +463,7 @@ process VCF2MAF {
     script:
     """
     module load bcftools/1.21
+
     bcftools view $filtered_vcf -s $sample > ${sample}.vcf
 
     conda run -n vep perl /home/alg2264/repos/vcf2maf/vcf2maf.pl \
@@ -460,6 +471,9 @@ process VCF2MAF {
         --output-maf ${sample}.maf \
         --tumor-id ${sample} \
         --remap-chain /home/alg2264/repos/vcf2maf/data/hg38_to_GRCh38.chain
+
+    # per-sample VCF slice is no longer needed after MAF conversion
+    rm ${sample}.vcf
     """
 }
 
@@ -518,7 +532,6 @@ process SLICE_MTDNA {
     samtools index ${sample}_mt.bam
     """
 }
-
 
 /*
  * Prepare CNA data (allele counts for ASCAT/CNAlign)
@@ -591,9 +604,9 @@ process GET_CNALIGN_OBJ {
     path replictimingfile
 
     output:
-    path "${patient}_CNalign_obj.rds"
+    //path "${patient}_CNalign_obj.rds"
     path "${patient}_CNalign_obj_mpcf.rds"
-    path "${patient}_CNalign_obj_mpcf_hisens.rds"
+    //path "${patient}_CNalign_obj_mpcf_hisens.rds"
 
     script:
     """
@@ -658,18 +671,18 @@ workflow {
     ref_files = tuple(ref_fasta, ref_amb, ref_ann, ref_bwt, ref_fai, ref_pac, ref_sa, ref_dict)
 
     // polymorphic sites
-    polymorphic_sites      = file(params.polymorphic_sites)
-    polymorphic_sites_tbi  = file(params.polymorphic_sites_tbi)
+    polymorphic_sites     = file(params.polymorphic_sites)
+    polymorphic_sites_tbi = file(params.polymorphic_sites_tbi)
     polymorphic_sites_files = tuple(polymorphic_sites, polymorphic_sites_tbi)
 
     // germline resources
-    germline_resource      = file(params.germline_resource)
-    germline_resource_tbi  = file(params.germline_resource_tbi)
+    germline_resource     = file(params.germline_resource)
+    germline_resource_tbi = file(params.germline_resource_tbi)
     germline_resource_files = tuple(germline_resource, germline_resource_tbi)
 
     // panel of normals
-    panel_of_normals      = file(params.panel_of_normals)
-    panel_of_normals_idx  = file(params.panel_of_normals_idx)
+    panel_of_normals     = file(params.panel_of_normals)
+    panel_of_normals_idx = file(params.panel_of_normals_idx)
     panel_of_normals_files = tuple(panel_of_normals, panel_of_normals_idx)
 
     // channel of genomic chunks
@@ -691,19 +704,17 @@ workflow {
     // Convert input BAMs to paired-end FASTQ
     bam_to_fastq_output = BAM_TO_FASTQ(sample_ch, make_dirs_ch)
 
-    // FastQC on raw (pre-trimming) FASTQs
-    fastqc_output = FASTQC(bam_to_fastq_output)
+    // FastQC (pre-trimming QC) + adapter trimming in one process.
+    // Raw FASTQs are deleted inside the script once both steps are complete.
+    fastqc_and_trim_output = FASTQC_AND_TRIM(bam_to_fastq_output)
 
-    // Adapter trimming
-    trim_adapt_output = TRIM_ADAPTERS(bam_to_fastq_output)
+    // BWA-MEM alignment (deletes trimmed FASTQs inside script)
+    bwa_mem_output = BWA_MEM(fastqc_and_trim_output.trimmed, ref_files)
 
-    // BWA-MEM alignment
-    bwa_mem_output = BWA_MEM(trim_adapt_output, ref_files)
-
-    // Sort SAM -> BAM
+    // Sort SAM -> BAM (deletes raw SAM inside script)
     sortsam_output = SAMTOOLS_SORT(bwa_mem_output, ref_files)
 
-    // MarkDuplicates
+    // MarkDuplicates (deletes sorted BAM/BAI inside script)
     markdup_output = GATK_MARKDUP(sortsam_output, ref_files)
 
     // Drop the metrics file from the tuple — downstream steps expect (sample, bam, bai)
@@ -734,17 +745,17 @@ workflow {
     region_stats_ch = mutect_output.map { it[4] }
     region_f1r2_ch  = mutect_output.map { it[5] }
 
-    all_vcf_ch     = region_vcf_ch.collect()
-    all_vcf_tbi_ch = region_vcf_tbi_ch.collect()
-    all_stats_ch   = region_stats_ch.collect()
-    all_f1r2_ch    = region_f1r2_ch.collect()
+    all_vcf_ch      = region_vcf_ch.collect()
+    all_vcf_tbi_ch  = region_vcf_tbi_ch.collect()
+    all_stats_ch    = region_stats_ch.collect()
+    all_f1r2_ch     = region_f1r2_ch.collect()
 
+    // MERGE_REGIONS deletes per-region files inside script
     mergeregions_output = MERGE_REGIONS(
         params.patient, all_vcf_ch, all_vcf_tbi_ch, all_stats_ch, all_f1r2_ch
     )
 
     filter_calls_output = FILTER_MUTECT_CALLS(params.patient, mergeregions_output, ref_files)
-
     filtered_vcf_ch     = filter_calls_output.map { it[2] }
     filtered_vcf_tbi_ch = filter_calls_output.map { it[3] }
 
@@ -756,10 +767,9 @@ workflow {
 
     // Slice mtDNA
     slice_mtdna_output = SLICE_MTDNA(preprocessed_ch, params.mt_label)
-
     mtbam_ch       = slice_mtdna_output.map { it[1] }
     mtbam_index_ch = slice_mtdna_output.map { it[2] }
-    all_mtbam_ch   = mtbam_ch.collect()
+    all_mtbam_ch       = mtbam_ch.collect()
     all_mtbam_index_ch = mtbam_index_ch.collect()
 
     // CNA data prep (tumor/normal pairs)
@@ -787,6 +797,5 @@ workflow {
     //    all_bams_ch, all_bam_indices_ch, params.patient
     //)
 }
-
 
 
